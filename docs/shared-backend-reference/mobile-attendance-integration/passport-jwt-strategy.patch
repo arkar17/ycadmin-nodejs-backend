@@ -1,0 +1,17 @@
+--- a/app/middlewares/passport/jwt-strategy.ts
++++ b/app/middlewares/passport/jwt-strategy.ts
+@@
+-      if (payload.loginType === "admin") {
++      if (payload.loginType === "admin") {
+@@
+-      } else {
++      } else if (payload.loginType === "member") {
+         const member = await prisma.member.findUnique({
+@@
+         return done(null, member);
+       }
++
++      // Do not turn an unknown issuer/type into a Member lookup. In
++      // particular, this prevents an Admin token with an overlapping numeric
++      // ID from authenticating to a Member route.
++      return done(null, false);

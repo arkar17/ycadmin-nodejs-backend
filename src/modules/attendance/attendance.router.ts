@@ -1,0 +1,15 @@
+import { Router } from 'express';
+import type { AdminIdentityRepository } from '../auth/admin-identity.repository.js';
+import { createAuthenticateAdmin } from '../../middleware/authenticate.js';
+import { requirePermission } from '../../middleware/authorize.js';
+import { validate } from '../../middleware/validate.js';
+import { AttendanceController } from './attendance.controller.js';
+import type { AttendanceRepository } from './attendance.repository.js';
+import { ManualAttendanceController } from './manual-attendance.controller.js';
+import type { ManualAttendanceRepository } from './manual-attendance.repository.js';
+import { manualAttendanceRequestSchema } from './manual-attendance.schema.js';
+import { ManualAttendanceService } from './manual-attendance.service.js';
+import { attendanceListRequestSchema } from './attendance.schema.js';
+import { AttendanceService } from './attendance.service.js';
+export type AttendanceDependencies = { adminIdentityRepository: AdminIdentityRepository; attendanceRepository: AttendanceRepository; manualAttendanceRepository: ManualAttendanceRepository };
+export const createAttendanceRouter = (dependencies: AttendanceDependencies): Router => { const router = Router(); const controller = new AttendanceController(new AttendanceService(dependencies.attendanceRepository)); const manualController = new ManualAttendanceController(new ManualAttendanceService(dependencies.manualAttendanceRepository)); const authenticateAdmin = createAuthenticateAdmin(dependencies.adminIdentityRepository); router.get('/', authenticateAdmin, requirePermission('attendance:list'), validate(attendanceListRequestSchema), controller.list); router.post('/manual', authenticateAdmin, requirePermission('attendance:create'), validate(manualAttendanceRequestSchema), manualController.create); return router; };

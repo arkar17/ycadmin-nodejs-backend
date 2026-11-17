@@ -1,0 +1,89 @@
+--- a/app/services/member/v1/fitness/attendance.service.ts
++++ b/app/services/member/v1/fitness/attendance.service.ts
+@@
+-import { Member, Prisma, Status } from "@prisma/client";
++import { AttendanceSource, Member, Prisma, Status } from "@prisma/client";
+@@
+-import { formatDate, formatDateOnly } from "../../../../helpers/helper";
++import { formatDate } from "../../../../helpers/helper";
++import { AttendanceQrCredentialService } from "./attendance-qr-credential.service";
+@@
+-const ONE_HOUR_MS = 60 * 60 * 1000;
+-
+ class MemberAttendanceService {
++  private readonly attendanceQrCredentials = new AttendanceQrCredentialService();
++
+@@
+   async createFromQr(
+@@
+     const qrToken = input.qr_token.trim();
+ 
+     const member = await this.resolveMember(input.partner_id, currentMemberId);
+ 
+-    const recentCheckIn = await prisma.attendance.findFirst({
+-      where: {
+-        memberId: member.id,
+-        createdAt: {
+-          gte: new Date(Date.now() - ONE_HOUR_MS),
+-        },
+-      },
+-      orderBy: { createdAt: "desc" },
+-    });
+-
+-    if (recentCheckIn) {
+-      throw new BadRequestException(
+-        "Already checked in! Please try again after 1 hour.",
+-      );
+-    }
+-
+-    const now = new Date();
+-    const date = formatDateOnly(now);
++    if (!(await this.attendanceQrCredentials.verifies(qrToken))) {
++      throw new BadRequestException("Invalid attendance QR credential.");
++    }
+ 
+-    const attendance = await prisma.attendance.create({
+-      data: {
+-        memberId: member.id,
+-        date,
+-        qrToken,
+-      },
+-    });
++    let attendance;
++    try {
++      attendance = await prisma.attendance.create({
++        data: {
++          memberId: member.id,
++          source: AttendanceSource.QR,
++          qrToken: null,
++        },
++      });
++    } catch (error) {
++      if (this.isRollingWindowConflict(error)) {
++        // Preserve installed-Flutter failure shape/message. The trigger, not
++        // this service, is the authoritative concurrency guard.
++        throw new BadRequestException(
++          "Already checked in! Please try again after 1 hour.",
++        );
++      }
++      throw error;
++    }
+@@
+     return {
+@@
+     };
+   }
++
++  private isRollingWindowConflict(error: unknown): boolean {
++    const message = error instanceof Error ? error.message : "";
++    const cause = error && typeof error === "object" && "cause" in error
++      ? (error as { cause?: unknown }).cause
++      : undefined;
++    const sqlState = cause && typeof cause === "object" && "code" in cause
++      ? (cause as { code?: unknown }).code
++      : undefined;
++
++    // Prisma's adapter may omit PostgreSQL's named constraint. Require the
++    // known SQLSTATE and fixed trigger message; never map arbitrary failures.
++    return sqlState === "P0001" && message.includes("ATTENDANCE_RECENTLY_RECORDED");
++  }

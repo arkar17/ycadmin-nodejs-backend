@@ -1,0 +1,21 @@
+--- a/app/controllers/member/v1/fitness/attendance.controller.ts
++++ b/app/controllers/member/v1/fitness/attendance.controller.ts
+@@
+ import {
+   BadRequestException,
++  Exception,
+   ForbiddenException,
+@@
+       if (
++        err instanceof Exception ||
+         err instanceof BadRequestException ||
+         err instanceof NotFoundException ||
+         err instanceof ForbiddenException ||
+         err instanceof ValidationException
+       ) {
+@@
+           result: {
+             isFullFilled: false,
+             message: err.message,
+             data: {},
+           },

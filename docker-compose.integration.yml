@@ -1,0 +1,20 @@
+services:
+  postgres-integration:
+    image: postgres:16-alpine
+    container_name: yc-fitness-admin-integration-postgres
+    environment:
+      POSTGRES_DB: yc_fitness_admin_integration
+      POSTGRES_USER: yc_fitness_integration
+      POSTGRES_PASSWORD: yc_fitness_integration_local_only
+    ports:
+      - '127.0.0.1:55432:5432'
+    volumes:
+      - yc-fitness-admin-integration-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U yc_fitness_integration -d yc_fitness_admin_integration']
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  yc-fitness-admin-integration-postgres:

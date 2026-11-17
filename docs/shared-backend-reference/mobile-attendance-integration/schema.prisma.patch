@@ -1,0 +1,46 @@
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@
+   attendancesCreated          Attendance[]         @relation("AttendanceCreatedBy")
+   attendancesUpdated          Attendance[]         @relation("AttendanceUpdatedBy")
++  attendanceQrCredentialsCreated  AttendanceQrCredential[] @relation("AttendanceQrCredentialCreatedBy")
++  attendanceQrCredentialsReplaced AttendanceQrCredential[] @relation("AttendanceQrCredentialReplacedBy")
++  attendanceQrCredentialsRevoked  AttendanceQrCredential[] @relation("AttendanceQrCredentialRevokedBy")
+@@
+ model Attendance {
+@@
+   qrToken  String?
++  source   AttendanceSource @default(LEGACY)
+@@
+ }
++
++model AttendanceQrCredential {
++  id                 Int                          @id @default(autoincrement())
++  status             AttendanceQrCredentialStatus @default(ACTIVE)
++  payloadCiphertext  Bytes
++  payloadIv          Bytes
++  payloadAuthTag     Bytes
++  payloadFingerprint Bytes                        @unique
++
++  createdById  Int
++  replacedById Int?
++  revokedById  Int?
++  createdBy    User  @relation("AttendanceQrCredentialCreatedBy", fields: [createdById], references: [id])
++  replacedBy   User? @relation("AttendanceQrCredentialReplacedBy", fields: [replacedById], references: [id])
++  revokedBy    User? @relation("AttendanceQrCredentialRevokedBy", fields: [revokedById], references: [id])
++  createdAt    DateTime @default(now())
++  replacedAt   DateTime?
++  revokedAt    DateTime?
++}
++
++enum AttendanceSource {
++  LEGACY
++  QR
++  MANUAL
++}
++
++enum AttendanceQrCredentialStatus {
++  ACTIVE
++  REPLACED
++  REVOKED
++}

@@ -1,0 +1,11 @@
+import { Router } from 'express';
+import { createAuthenticateAdmin } from '../../middleware/authenticate.js';
+import { requirePermission } from '../../middleware/authorize.js';
+import { validate } from '../../middleware/validate.js';
+import type { AdminIdentityRepository } from '../auth/admin-identity.repository.js';
+import { WorkoutController } from './workout.controller.js';
+import type { WorkoutRepository } from './workout.repository.js';
+import { workoutDetailRequestSchema, workoutListRequestSchema, workoutUpdateRequestSchema } from './workout.schema.js';
+import { WorkoutService } from './workout.service.js';
+export type WorkoutDependencies = { adminIdentityRepository: AdminIdentityRepository; workoutRepository: WorkoutRepository };
+export const createWorkoutRouter = (dependencies: WorkoutDependencies): Router => { const router = Router(); const controller = new WorkoutController(new WorkoutService(dependencies.workoutRepository)); const authenticate = createAuthenticateAdmin(dependencies.adminIdentityRepository); router.get('/', authenticate, requirePermission('workout:list'), validate(workoutListRequestSchema), controller.list); router.get('/:id', authenticate, requirePermission('workout:read'), validate(workoutDetailRequestSchema), controller.detail); router.patch('/:id', authenticate, requirePermission('workout:update'), validate(workoutUpdateRequestSchema), controller.update); return router; };

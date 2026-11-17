@@ -1,0 +1,7 @@
+--- a/app/resources/member/v1/fitness/attendance.resource.ts
++++ b/app/resources/member/v1/fitness/attendance.resource.ts
+@@
+-      qr_token: attendance.qrToken ?? null,
++      // Preserve the response key for installed Flutter builds, but never
++      // disclose new or historical permanent QR values.
++      qr_token: null,

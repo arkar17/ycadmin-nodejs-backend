@@ -1,0 +1,17 @@
+--- a/prisma/seeds/permission.seeder.ts
++++ b/prisma/seeds/permission.seeder.ts
+@@
+     {
+       name: "attendance:delete",
+       description: "Delete attendance",
+     },
++    // Attendance QR management. Catalog definition only: role grants must be
++    // explicit and separately approved; do not grant these to every role.
++    {
++      name: "attendance-qr:create",
++      description: "Create the permanent attendance QR credential",
++    },
++    {
++      name: "attendance-qr:read",
++      description: "Read the permanent attendance QR credential for reprint",
++    },
