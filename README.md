@@ -102,10 +102,27 @@ The first account-mutation surface is System-Admin-only, regardless of ordinary
 - `PUT /api/admin/v1/users/:id/roles` atomically replaces the complete role set.
 
 Creation uses the legacy-compatible bcrypt cost and password-strength rule. Email and
-username are trimmed and lowercased. Password reset, role CRUD, permission CRUD, and
-role-permission mutations remain unavailable. Protected changes run through retryable
-serializable transactions; self-removal/self-deactivation and removal of the final
-active System Admin are rejected. See `docs/system-admin-mutation-safety.md`.
+username are trimmed and lowercased. Password reset and Permission catalogue CRUD
+remain unavailable. Protected changes run through retryable serializable transactions;
+self-removal/self-deactivation and removal of the final active System Admin are
+rejected. See `docs/system-admin-mutation-safety.md`.
+
+Role mutations are also System-Admin-only:
+
+- `POST /api/admin/v1/roles` creates a normal role, optionally with an atomically
+  validated set of active Permission IDs.
+- `PATCH /api/admin/v1/roles/:id` updates only the normal role's name/description.
+- `POST /api/admin/v1/roles/:id/activate` and `/deactivate` change normal-role status.
+- `POST` / `DELETE /api/admin/v1/roles/:id/permissions/:permissionId` assign or
+  remove one Permission.
+- `PUT /api/admin/v1/roles/:id/permissions` atomically replaces the complete set;
+  an empty set is valid.
+
+The exact `SuperAdmin` role is immutable through all role and role-permission routes.
+Permission records remain read-only and must already exist and be active before they
+can be assigned. Normal-role retirement leaves UserRole rows intact; because protected
+requests reload active RBAC state, role and Permission changes affect the next request
+without a replacement JWT.
 
 ## Member Directory
 

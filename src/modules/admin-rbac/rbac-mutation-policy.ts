@@ -5,6 +5,7 @@ import { isSystemAdminRoleName } from '../auth/admin-access-policy.js';
 
 export type RbacMutationActor = { userId: number; isSystemAdmin: boolean };
 export type RbacRoleState = { id: number; name: string; status: Status };
+export type RbacRoleProfile = RbacRoleState & { description: string | null };
 export type RbacUserState = { id: number; status: Status; isActiveSystemAdmin: boolean };
 export type RbacPermissionState = { id: number; name: string; status: Status };
 export type RbacAdminUserProfile = {
@@ -69,6 +70,12 @@ export const assertRoleCanBeHardDeleted = (roleName: string, assignedUserCount: 
 
 export const assertProtectedRoleRelationshipActor = (roleName: string, actor: RbacMutationActor): void => {
   if (isSystemAdminRoleName(roleName)) requireSystemAdminActor(actor);
+};
+
+export const assertRolePermissionMutable = (roleName: string): void => {
+  if (isSystemAdminRoleName(roleName)) {
+    throw conflict('SYSTEM_ROLE_PROTECTED', 'The System Admin role permission relationships are immutable.');
+  }
 };
 
 export const assertRoleCanBeRemovedFromUser = (

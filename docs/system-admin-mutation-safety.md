@@ -1,7 +1,7 @@
 # System Admin mutation safety foundation
 
-This module backs the first public Admin account-management mutation endpoints and
-remains reusable for later role/permission management. The implementation uses only
+This module backs the public Admin account, role, and role-permission management
+endpoints. The implementation uses only
 the existing `User`, `Role`, `Permission`, `UserRole`, and `RolePermission` tables.
 
 ## Invariant and protected role
@@ -13,9 +13,10 @@ deactivated, deleted, or recreated through ordinary role mutation policy. Assign
 normal roles cannot be hard-deleted; future retirement should set them `INACTIVE`.
 
 Only an actor whose System Admin state is re-read in the mutation transaction may
-assign or remove protected membership or modify the protected role's permission
-relationships. The initial fail-closed policy prohibits System Admin self-removal and
-self-deactivation even when another System Admin exists.
+perform account, role, or role-permission mutations. The protected role's fields,
+status, and permission relationships are immutable through these APIs. The fail-closed
+policy prohibits System Admin self-removal and self-deactivation even when another
+System Admin exists.
 
 ## Atomicity and concurrency
 
@@ -50,6 +51,19 @@ Admin remains.
 - Complete role replacement rejects duplicate or missing role IDs and validates every
   proposed role before deleting any existing assignment.
 - Already inactive User deactivation is an idempotent `changed: false` result.
+- Role creation validates every initial Permission before creating either the Role or
+  its RolePermission rows.
+- Normal roles are retired by setting `status = INACTIVE`; existing UserRole rows are
+  retained and stop contributing to login eligibility and effective permissions.
+- Safe role updates are limited to name and description. A role cannot be renamed to
+  or from the exact protected `SuperAdmin` name.
+- Single Permission assignment is idempotent. Removal of a missing relationship is a
+  deterministic `NOT_FOUND` response.
+- Complete Permission replacement rejects duplicate, missing, or inactive Permission
+  IDs before deleting any relationship. An empty replacement set is valid.
+- Permission catalogue records are never created or modified by these endpoints.
+- Active role and Permission state is reloaded on every protected request, so changes
+  apply without issuing a new JWT.
 
 ## Security audit logging
 

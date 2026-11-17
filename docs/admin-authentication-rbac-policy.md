@@ -32,7 +32,7 @@ the user and that assigned role are both currently active.
 System Admin bypasses endpoint permission guards. It does not bypass authentication,
 active-user checks, active-role checks, or JWT validation.
 
-Future Admin-management APIs must enforce these application-level invariants:
+Admin-management APIs enforce these application-level invariants:
 
 - `SuperAdmin` cannot be renamed, deactivated, or deleted through normal role APIs;
 - normal Admins cannot assign or remove `SuperAdmin`;
@@ -54,11 +54,11 @@ the next protected request without issuing another JWT.
 - Repository/database failures are propagated to the central infrastructure error
   handler and are never converted into `401 INVALID_TOKEN`.
 
-## Read-only management surface
+## Management surface
 
-The current management foundation is intentionally read-only. `/auth/me` requires
-authentication only; user, role, and permission catalogue routes require their
-existing `resource:list` or `resource:read` permission, with the normal System Admin
-bypass. Responses are explicit DTOs and never expose `User.password`, tokens, or
-relationship-row internals. Mutation endpoints and last-System-Admin transactional
-protections remain deferred to the next management phase.
+`/auth/me` requires authentication only; user, role, and permission catalogue reads
+require their existing `resource:list` or `resource:read` permission, with the normal
+System Admin bypass. Account, role, role-membership, and role-permission mutations are
+restricted to a current System Admin and run through the serializable mutation safety
+layer. The Permission catalogue itself remains read-only. Responses are explicit DTOs
+and never expose `User.password`, tokens, or relationship-row internals.

@@ -7,6 +7,7 @@ import {
   type RbacAdminUserProfile,
   type RbacPermissionState,
   type RbacRoleState,
+  type RbacRoleProfile,
   type RbacUserState,
 } from './rbac-mutation-policy.js';
 import { runWithSerializableRetry } from './serializable-transaction.js';
@@ -16,8 +17,11 @@ export interface RbacMutationTransaction {
   findUserProfile(id: number): Promise<RbacAdminUserProfile | null>;
   findUserIdentityConflict(email: string, username: string, excludeUserId?: number): Promise<'email' | 'username' | null>;
   findRole(id: number): Promise<RbacRoleState | null>;
+  findRoleProfile(id: number): Promise<RbacRoleProfile | null>;
+  findRoleNameConflict(name: string, excludeRoleId?: number): Promise<boolean>;
   findRoles(ids: readonly number[]): Promise<RbacRoleState[]>;
   findPermission(id: number): Promise<RbacPermissionState | null>;
+  findPermissions(ids: readonly number[]): Promise<RbacPermissionState[]>;
   countActiveSystemAdmins(): Promise<number>;
   listUserRoleIds(userId: number): Promise<number[]>;
   hasUserRole(userId: number, roleId: number): Promise<boolean>;
@@ -39,6 +43,21 @@ export interface RbacMutationTransaction {
     input: { name?: string; email?: string; username?: string },
     updatedById: number,
   ): Promise<void>;
+  createAdminRole(input: {
+    name: string;
+    description: string | null;
+    status: Status;
+    permissionIds: readonly number[];
+    createdById: number;
+  }): Promise<number>;
+  updateAdminRole(
+    roleId: number,
+    input: { name?: string; description?: string | null },
+    updatedById: number,
+  ): Promise<void>;
+  updateRoleStatus(roleId: number, status: Status, updatedById: number): Promise<void>;
+  listRolePermissionIds(roleId: number): Promise<number[]>;
+  replaceRolePermissions(roleId: number, permissionIds: readonly number[]): Promise<void>;
   hasRolePermission(roleId: number, permissionId: number): Promise<boolean>;
   createRolePermission(roleId: number, permissionId: number): Promise<boolean>;
   deleteRolePermission(roleId: number, permissionId: number): Promise<boolean>;
@@ -105,6 +124,19 @@ class PrismaRbacMutationTransaction implements RbacMutationTransaction {
     return this.transaction.role.findUnique({ where: { id }, select: { id: true, name: true, status: true } });
   }
 
+  public async findRoleProfile(id: number): Promise<RbacRoleProfile | null> {
+    return this.transaction.role.findUnique({
+      where: { id },
+      select: { id: true, name: true, description: true, status: true },
+    });
+  }
+
+  public async findRoleNameConflict(name: string, excludeRoleId?: number): Promise<boolean> {
+    return (await this.transaction.role.count({
+      where: { name, ...(excludeRoleId === undefined ? {} : { NOT: { id: excludeRoleId } }) },
+    })) > 0;
+  }
+
   public async findRoles(ids: readonly number[]): Promise<RbacRoleState[]> {
     if (ids.length === 0) return [];
     return this.transaction.role.findMany({
@@ -116,6 +148,14 @@ class PrismaRbacMutationTransaction implements RbacMutationTransaction {
   public async findPermission(id: number): Promise<RbacPermissionState | null> {
     return this.transaction.permission.findUnique({
       where: { id },
+      select: { id: true, name: true, status: true },
+    });
+  }
+
+  public async findPermissions(ids: readonly number[]): Promise<RbacPermissionState[]> {
+    if (ids.length === 0) return [];
+    return this.transaction.permission.findMany({
+      where: { id: { in: [...ids] } },
       select: { id: true, name: true, status: true },
     });
   }
@@ -195,6 +235,60 @@ class PrismaRbacMutationTransaction implements RbacMutationTransaction {
     updatedById: number,
   ): Promise<void> {
     await this.transaction.user.update({ where: { id: userId }, data: { ...input, updatedById } });
+  }
+
+  public async createAdminRole(input: {
+    name: string;
+    description: string | null;
+    status: Status;
+    permissionIds: readonly number[];
+    createdById: number;
+  }): Promise<number> {
+    const role = await this.transaction.role.create({
+      data: {
+        name: input.name,
+        description: input.description,
+        status: input.status,
+        createdById: input.createdById,
+      },
+      select: { id: true },
+    });
+    if (input.permissionIds.length > 0) {
+      await this.transaction.rolePermission.createMany({
+        data: input.permissionIds.map((permissionId) => ({ roleId: role.id, permissionId })),
+      });
+    }
+    return role.id;
+  }
+
+  public async updateAdminRole(
+    roleId: number,
+    input: { name?: string; description?: string | null },
+    updatedById: number,
+  ): Promise<void> {
+    await this.transaction.role.update({ where: { id: roleId }, data: { ...input, updatedById } });
+  }
+
+  public async updateRoleStatus(roleId: number, status: Status, updatedById: number): Promise<void> {
+    await this.transaction.role.update({ where: { id: roleId }, data: { status, updatedById } });
+  }
+
+  public async listRolePermissionIds(roleId: number): Promise<number[]> {
+    const assignments = await this.transaction.rolePermission.findMany({
+      where: { roleId },
+      select: { permissionId: true },
+      orderBy: { permissionId: 'asc' },
+    });
+    return assignments.map(({ permissionId }) => permissionId);
+  }
+
+  public async replaceRolePermissions(roleId: number, permissionIds: readonly number[]): Promise<void> {
+    await this.transaction.rolePermission.deleteMany({ where: { roleId } });
+    if (permissionIds.length > 0) {
+      await this.transaction.rolePermission.createMany({
+        data: permissionIds.map((permissionId) => ({ roleId, permissionId })),
+      });
+    }
   }
 
   public async hasRolePermission(roleId: number, permissionId: number): Promise<boolean> {

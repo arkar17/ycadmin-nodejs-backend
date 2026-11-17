@@ -8,6 +8,7 @@ export type RbacSecurityAuditEvent = {
   action: string;
   targetType: 'User' | 'Role' | 'Permission' | 'UserRole' | 'RolePermission';
   targetId?: number;
+  permissionId?: number;
   beforeIds?: number[];
   afterIds?: number[];
   outcome: RbacSecurityAuditOutcome;

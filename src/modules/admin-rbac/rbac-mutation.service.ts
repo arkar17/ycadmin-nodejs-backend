@@ -5,9 +5,13 @@ import { isPrismaUniqueConstraintError } from '../../shared/prisma-errors.js';
 import { isSystemAdminRoleName } from '../auth/admin-access-policy.js';
 import {
   assertPermissionAssignable,
+  assertProtectedRoleMutable,
   assertProtectedRoleRelationshipActor,
   assertRoleAssignable,
   assertRoleCanBeRemovedFromUser,
+  assertRoleNameCreatable,
+  assertRolePermissionMutable,
+  assertRoleUpdateAllowed,
   assertSystemAdminInvariant,
   assertUniqueIdentifiers,
   assertUserCanBeDeactivated,
@@ -33,9 +37,19 @@ export type CreateAdminMutationInput = {
   roleIds: readonly number[];
 };
 export type UpdateAdminProfileMutationInput = { name?: string; email?: string; username?: string };
+export type CreateRoleMutationInput = {
+  name: string;
+  description?: string | null;
+  status: Status;
+  permissionIds: readonly number[];
+};
+export type UpdateRoleMutationInput = { name?: string; description?: string | null };
 
 type InternalMutationResult = RbacMutationResult & { beforeIds?: number[]; afterIds?: number[]; targetId?: number };
-type AuditTarget = Pick<RbacSecurityAuditEvent, 'action' | 'targetType'> & { targetId?: number };
+type AuditTarget = Pick<RbacSecurityAuditEvent, 'action' | 'targetType'> & {
+  targetId?: number;
+  permissionId?: number;
+};
 
 const notFound = (entity: 'User' | 'Role' | 'Permission' | 'Role assignment' | 'Permission assignment'): AppError =>
   new AppError({ statusCode: 404, code: 'NOT_FOUND', message: `${entity} was not found.` });
@@ -44,6 +58,11 @@ const identityConflict = (field?: 'email' | 'username'): AppError => new AppErro
   code: 'USER_IDENTITY_CONFLICT',
   message: 'An Admin user already uses this email or username.',
   ...(field ? { details: { field } } : {}),
+});
+const roleNameConflict = (): AppError => new AppError({
+  statusCode: 409,
+  code: 'ROLE_NAME_CONFLICT',
+  message: 'A role with this name already exists.',
 });
 
 export class RbacMutationService {
@@ -120,6 +139,76 @@ export class RbacMutationService {
         return { changed: true };
       },
     );
+  }
+
+  public createRole(context: RbacMutationContext, input: CreateRoleMutationInput): Promise<RbacMutationResult & { roleId: number }> {
+    return this.executeAudited(context, { action: 'admin.role.create', targetType: 'Role' }, async (transaction) => {
+      assertUniqueIdentifiers(input.permissionIds, 'permission');
+      requireSystemAdminActor(await this.resolveActor(transaction, context.actorUserId));
+      assertRoleNameCreatable(input.name);
+      if (await transaction.findRoleNameConflict(input.name)) throw roleNameConflict();
+      const permissions = await transaction.findPermissions(input.permissionIds);
+      this.assertEveryPermissionExists(input.permissionIds, permissions);
+      for (const permission of permissions) assertPermissionAssignable(permission);
+      try {
+        const roleId = await transaction.createAdminRole({
+          name: input.name,
+          description: input.description ?? null,
+          status: input.status,
+          permissionIds: input.permissionIds,
+          createdById: context.actorUserId,
+        });
+        return {
+          changed: true,
+          roleId,
+          targetId: roleId,
+          beforeIds: [],
+          afterIds: [...input.permissionIds].sort((left, right) => left - right),
+        };
+      } catch (error) {
+        if (isPrismaUniqueConstraintError(error)) throw roleNameConflict();
+        throw error;
+      }
+    }) as Promise<RbacMutationResult & { roleId: number }>;
+  }
+
+  public updateRole(
+    context: RbacMutationContext,
+    roleId: number,
+    input: UpdateRoleMutationInput,
+  ): Promise<RbacMutationResult> {
+    return this.executeAudited(
+      context,
+      { action: 'admin.role.update', targetType: 'Role', targetId: roleId },
+      async (transaction) => {
+        requireSystemAdminActor(await this.resolveActor(transaction, context.actorUserId));
+        const role = await transaction.findRoleProfile(roleId);
+        if (!role) throw notFound('Role');
+        assertRoleUpdateAllowed(role.name, input.name);
+        if (input.name !== undefined && input.name !== role.name && await transaction.findRoleNameConflict(input.name, roleId)) {
+          throw roleNameConflict();
+        }
+        const changed = (input.name !== undefined && input.name !== role.name)
+          || (input.description !== undefined && input.description !== role.description);
+        if (changed) {
+          try {
+            await transaction.updateAdminRole(roleId, input, context.actorUserId);
+          } catch (error) {
+            if (isPrismaUniqueConstraintError(error)) throw roleNameConflict();
+            throw error;
+          }
+        }
+        return { changed };
+      },
+    );
+  }
+
+  public activateRole(context: RbacMutationContext, roleId: number): Promise<RbacMutationResult> {
+    return this.changeRoleStatus(context, roleId, Status.ACTIVE, 'admin.role.activate');
+  }
+
+  public deactivateRole(context: RbacMutationContext, roleId: number): Promise<RbacMutationResult> {
+    return this.changeRoleStatus(context, roleId, Status.INACTIVE, 'admin.role.deactivate');
   }
 
   public assignRole(context: RbacMutationContext, targetUserId: number, roleId: number): Promise<RbacMutationResult> {
@@ -213,15 +302,22 @@ export class RbacMutationService {
     roleId: number,
     permissionId: number,
   ): Promise<RbacMutationResult> {
-    return this.executeAudited(context, { action: 'admin.permission.assign', targetType: 'RolePermission', targetId: roleId },
+    return this.executeAudited(context, {
+      action: 'admin.permission.assign',
+      targetType: 'RolePermission',
+      targetId: roleId,
+      permissionId,
+    },
       async (transaction) => {
+        requireSystemAdminActor(await this.resolveActor(transaction, context.actorUserId));
         const role = await transaction.findRole(roleId);
         if (!role) throw notFound('Role');
+        assertRolePermissionMutable(role.name);
+        if (role.status !== Status.ACTIVE) {
+          throw new AppError({ statusCode: 409, code: 'ROLE_INACTIVE', message: 'Permissions cannot be assigned to an inactive role.' });
+        }
         const permission = await transaction.findPermission(permissionId);
         if (!permission) throw notFound('Permission');
-        if (isSystemAdminRoleName(role.name)) {
-          assertProtectedRoleRelationshipActor(role.name, await this.resolveActor(transaction, context.actorUserId));
-        }
         assertPermissionAssignable(permission);
         if (await transaction.hasRolePermission(roleId, permissionId)) {
           return { changed: false, beforeIds: [permissionId], afterIds: [permissionId] };
@@ -236,18 +332,49 @@ export class RbacMutationService {
     roleId: number,
     permissionId: number,
   ): Promise<RbacMutationResult> {
-    return this.executeAudited(context, { action: 'admin.permission.remove', targetType: 'RolePermission', targetId: roleId },
+    return this.executeAudited(context, {
+      action: 'admin.permission.remove',
+      targetType: 'RolePermission',
+      targetId: roleId,
+      permissionId,
+    },
       async (transaction) => {
+        requireSystemAdminActor(await this.resolveActor(transaction, context.actorUserId));
         const role = await transaction.findRole(roleId);
         if (!role) throw notFound('Role');
+        assertRolePermissionMutable(role.name);
         if (!(await transaction.findPermission(permissionId))) throw notFound('Permission');
         if (!(await transaction.hasRolePermission(roleId, permissionId))) throw notFound('Permission assignment');
-        if (isSystemAdminRoleName(role.name)) {
-          assertProtectedRoleRelationshipActor(role.name, await this.resolveActor(transaction, context.actorUserId));
-        }
         const changed = await transaction.deleteRolePermission(roleId, permissionId);
         return { changed, beforeIds: [permissionId], afterIds: changed ? [] : [permissionId] };
       });
+  }
+
+  public replaceRolePermissions(
+    context: RbacMutationContext,
+    roleId: number,
+    permissionIds: readonly number[],
+  ): Promise<RbacMutationResult> {
+    return this.executeAudited(
+      context,
+      { action: 'admin.permissions.replace', targetType: 'RolePermission', targetId: roleId },
+      async (transaction) => {
+        assertUniqueIdentifiers(permissionIds, 'permission');
+        requireSystemAdminActor(await this.resolveActor(transaction, context.actorUserId));
+        const role = await transaction.findRole(roleId);
+        if (!role) throw notFound('Role');
+        assertRolePermissionMutable(role.name);
+        const permissions = await transaction.findPermissions(permissionIds);
+        this.assertEveryPermissionExists(permissionIds, permissions);
+        for (const permission of permissions) assertPermissionAssignable(permission);
+        const beforeIds = await transaction.listRolePermissionIds(roleId);
+        const afterIds = [...permissionIds].sort((left, right) => left - right);
+        const unchanged = beforeIds.length === afterIds.length
+          && beforeIds.every((permissionId) => afterIds.includes(permissionId));
+        if (!unchanged) await transaction.replaceRolePermissions(roleId, afterIds);
+        return { changed: !unchanged, beforeIds, afterIds };
+      },
+    );
   }
 
   private async assignRoleInTransaction(
@@ -278,6 +405,27 @@ export class RbacMutationService {
     if (roles.length !== requestedIds.length) throw notFound('Role');
   }
 
+  private assertEveryPermissionExists(requestedIds: readonly number[], permissions: readonly { id: number }[]): void {
+    if (permissions.length !== requestedIds.length) throw notFound('Permission');
+  }
+
+  private changeRoleStatus(
+    context: RbacMutationContext,
+    roleId: number,
+    status: Status,
+    action: 'admin.role.activate' | 'admin.role.deactivate',
+  ): Promise<RbacMutationResult> {
+    return this.executeAudited(context, { action, targetType: 'Role', targetId: roleId }, async (transaction) => {
+      requireSystemAdminActor(await this.resolveActor(transaction, context.actorUserId));
+      const role = await transaction.findRole(roleId);
+      if (!role) throw notFound('Role');
+      assertProtectedRoleMutable(role.name, 'deactivate');
+      if (role.status === status) return { changed: false };
+      await transaction.updateRoleStatus(roleId, status, context.actorUserId);
+      return { changed: true };
+    });
+  }
+
   private async executeAudited(
     context: RbacMutationContext,
     target: AuditTarget,
@@ -291,12 +439,18 @@ export class RbacMutationService {
         result.changed ? 'changed' : 'no_change',
         result,
       );
-      return { changed: result.changed, ...('userId' in result ? { userId: result.userId } : {}) };
+      return {
+        changed: result.changed,
+        ...('userId' in result ? { userId: result.userId } : {}),
+        ...('roleId' in result ? { roleId: result.roleId } : {}),
+      };
     } catch (error) {
       const mappedError = ['admin.user.create', 'admin.user.update'].includes(target.action)
         && isPrismaUniqueConstraintError(error)
         ? identityConflict()
-        : error;
+        : ['admin.role.create', 'admin.role.update'].includes(target.action) && isPrismaUniqueConstraintError(error)
+          ? roleNameConflict()
+          : error;
       this.recordAudit(
         context,
         target,
