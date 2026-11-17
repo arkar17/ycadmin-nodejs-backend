@@ -63,6 +63,13 @@ const resetAndSeed = async (): Promise<Fixture> => {
       password: 'synthetic-only-password-hash',
     },
   });
+  // Authentication requires at least one ACTIVE Role. This Admin is therefore
+  // authenticated through an ACTIVE Role that grants zero permissions, so the
+  // directory must answer 403 (authorization), not 401 (authentication).
+  const zeroPermissionRole = await prisma.role.create({
+    data: { name: 'Synthetic Zero Permission Role', description: 'Synthetic integration-test role without permissions' },
+  });
+  await prisma.userRole.create({ data: { userId: noPermissionAdmin.id, roleId: zeroPermissionRole.id } });
 
   const inactiveAdmin = await prisma.user.create({
     data: {
