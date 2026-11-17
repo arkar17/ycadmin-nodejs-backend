@@ -70,7 +70,9 @@ describe('RBAC mutation safety service', () => {
 
   it('treats an already inactive User deactivation as an idempotent no-op', async () => {
     const state = setup();
-    vi.mocked(state.tx.findUser).mockResolvedValue({ id: 2, status: Status.INACTIVE, isActiveSystemAdmin: false });
+    vi.mocked(state.tx.findUser).mockImplementation(async (id) => id === 1
+      ? activeSystemUser(1)
+      : { id: 2, status: Status.INACTIVE, isActiveSystemAdmin: false });
     await expect(state.service.deactivateUser(context, 2)).resolves.toEqual({ changed: false });
     expect(state.tx.updateUserStatus).not.toHaveBeenCalled();
   });

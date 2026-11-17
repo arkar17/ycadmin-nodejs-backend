@@ -7,7 +7,7 @@ export type RbacSecurityAuditEvent = {
   actorUserId: number;
   action: string;
   targetType: 'User' | 'Role' | 'Permission' | 'UserRole' | 'RolePermission';
-  targetId: number;
+  targetId?: number;
   beforeIds?: number[];
   afterIds?: number[];
   outcome: RbacSecurityAuditOutcome;

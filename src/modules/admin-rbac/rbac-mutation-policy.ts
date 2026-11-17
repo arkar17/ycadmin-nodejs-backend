@@ -7,6 +7,13 @@ export type RbacMutationActor = { userId: number; isSystemAdmin: boolean };
 export type RbacRoleState = { id: number; name: string; status: Status };
 export type RbacUserState = { id: number; status: Status; isActiveSystemAdmin: boolean };
 export type RbacPermissionState = { id: number; name: string; status: Status };
+export type RbacAdminUserProfile = {
+  id: number;
+  name: string;
+  email: string;
+  username: string;
+  status: Status;
+};
 export type ProtectedRoleMutation = 'rename' | 'deactivate' | 'delete';
 
 export const isActiveSystemAdminMembership = (

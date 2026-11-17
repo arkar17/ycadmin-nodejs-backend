@@ -1,9 +1,8 @@
 # System Admin mutation safety foundation
 
-This module is an internal safety layer for future Admin-management mutation
-endpoints. No public mutation routes are registered yet, and the implementation uses
-only the existing `User`, `Role`, `Permission`, `UserRole`, and `RolePermission`
-tables.
+This module backs the first public Admin account-management mutation endpoints and
+remains reusable for later role/permission management. The implementation uses only
+the existing `User`, `Role`, `Permission`, `UserRole`, and `RolePermission` tables.
 
 ## Invariant and protected role
 
@@ -25,8 +24,9 @@ transaction-scoped repository. `PrismaRbacMutationRepository` uses a PostgreSQL
 `SERIALIZABLE` interactive transaction and retries Prisma `P2034` write conflicts up
 to three attempts. With the Prisma PostgreSQL driver adapter, SQLSTATE `40001` may
 surface directly as `DriverAdapterError` with `TransactionWriteConflict`; the same
-narrowly identified condition is retried. The active-System-Admin count and mutation therefore
-commit as one serializable unit rather than as a count followed by an unrelated write.
+narrowly identified condition is retried. The active-System-Admin count and mutation
+therefore commit as one serializable unit rather than as a count followed by an
+unrelated write.
 
 No PostgreSQL advisory lock or raw SQL is used. Serializable isolation is sufficient
 for the current predicate-read/write operations and keeps the implementation inside
@@ -53,8 +53,8 @@ Admin remains.
 
 ## Security audit logging
 
-Future controllers must construct a request context containing the Pino request ID
-and authenticated actor User ID, and use `PinoRbacSecurityAuditSink`. Events contain
+Mutation controllers construct a request context containing the Pino request ID and
+authenticated actor User ID and use `PinoRbacSecurityAuditSink`. Events contain
 the action, target type/ID, before/after identifiers where relevant, outcome, and a
 stable rejection reason. They never contain passwords, hashes, JWTs, or secrets.
 

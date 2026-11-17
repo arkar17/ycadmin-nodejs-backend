@@ -4,6 +4,7 @@ import { getPrismaClient } from '../../database/prisma.js';
 import { SYSTEM_ADMIN_ROLE_NAME } from '../auth/admin-access-policy.js';
 import {
   isActiveSystemAdminMembership,
+  type RbacAdminUserProfile,
   type RbacPermissionState,
   type RbacRoleState,
   type RbacUserState,
@@ -12,6 +13,8 @@ import { runWithSerializableRetry } from './serializable-transaction.js';
 
 export interface RbacMutationTransaction {
   findUser(id: number): Promise<RbacUserState | null>;
+  findUserProfile(id: number): Promise<RbacAdminUserProfile | null>;
+  findUserIdentityConflict(email: string, username: string, excludeUserId?: number): Promise<'email' | 'username' | null>;
   findRole(id: number): Promise<RbacRoleState | null>;
   findRoles(ids: readonly number[]): Promise<RbacRoleState[]>;
   findPermission(id: number): Promise<RbacPermissionState | null>;
@@ -22,6 +25,20 @@ export interface RbacMutationTransaction {
   deleteUserRole(userId: number, roleId: number): Promise<boolean>;
   replaceUserRoles(userId: number, roleIds: readonly number[]): Promise<void>;
   updateUserStatus(userId: number, status: Status, updatedById: number): Promise<void>;
+  createAdminUser(input: {
+    name: string;
+    email: string;
+    username: string;
+    passwordHash: string;
+    status: Status;
+    roleIds: readonly number[];
+    createdById: number;
+  }): Promise<number>;
+  updateAdminUserProfile(
+    userId: number,
+    input: { name?: string; email?: string; username?: string },
+    updatedById: number,
+  ): Promise<void>;
   hasRolePermission(roleId: number, permissionId: number): Promise<boolean>;
   createRolePermission(roleId: number, permissionId: number): Promise<boolean>;
   deleteRolePermission(roleId: number, permissionId: number): Promise<boolean>;
@@ -56,6 +73,32 @@ class PrismaRbacMutationTransaction implements RbacMutationTransaction {
         user.roles.map(({ role }) => role),
       ),
     };
+  }
+
+  public async findUserProfile(id: number): Promise<RbacAdminUserProfile | null> {
+    return this.transaction.user.findUnique({
+      where: { id },
+      select: { id: true, name: true, email: true, username: true, status: true },
+    });
+  }
+
+  public async findUserIdentityConflict(
+    email: string,
+    username: string,
+    excludeUserId?: number,
+  ): Promise<'email' | 'username' | null> {
+    const user = await this.transaction.user.findFirst({
+      where: {
+        OR: [
+          { email: { equals: email, mode: 'insensitive' } },
+          { username: { equals: username, mode: 'insensitive' } },
+        ],
+        ...(excludeUserId === undefined ? {} : { NOT: { id: excludeUserId } }),
+      },
+      select: { email: true, username: true },
+    });
+    if (!user) return null;
+    return user.email.toLowerCase() === email.toLowerCase() ? 'email' : 'username';
   }
 
   public async findRole(id: number): Promise<RbacRoleState | null> {
@@ -118,6 +161,40 @@ class PrismaRbacMutationTransaction implements RbacMutationTransaction {
 
   public async updateUserStatus(userId: number, status: Status, updatedById: number): Promise<void> {
     await this.transaction.user.update({ where: { id: userId }, data: { status, updatedById } });
+  }
+
+  public async createAdminUser(input: {
+    name: string;
+    email: string;
+    username: string;
+    passwordHash: string;
+    status: Status;
+    roleIds: readonly number[];
+    createdById: number;
+  }): Promise<number> {
+    const user = await this.transaction.user.create({
+      data: {
+        name: input.name,
+        email: input.email,
+        username: input.username,
+        password: input.passwordHash,
+        status: input.status,
+        createdById: input.createdById,
+      },
+      select: { id: true },
+    });
+    await this.transaction.userRole.createMany({
+      data: input.roleIds.map((roleId) => ({ userId: user.id, roleId })),
+    });
+    return user.id;
+  }
+
+  public async updateAdminUserProfile(
+    userId: number,
+    input: { name?: string; email?: string; username?: string },
+    updatedById: number,
+  ): Promise<void> {
+    await this.transaction.user.update({ where: { id: userId }, data: { ...input, updatedById } });
   }
 
   public async hasRolePermission(roleId: number, permissionId: number): Promise<boolean> {

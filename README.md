@@ -78,10 +78,9 @@ The API accepts only bearer tokens using the verified shared payload shape `{ id
 
 There is no token revocation or server-side logout mechanism in the verified shared design. Browser logout can only clear a memory-held token. See `docs/shared-backend-reference/admin-authentication-stage-3f.md`.
 
-## Admin management (read-only)
+## Admin account management
 
-The following endpoints expose safe views of the existing shared RBAC records. They
-do not create, update, delete, activate, deactivate, or assign anything:
+Read endpoints retain permission-based authorization:
 
 - `GET /api/admin/v1/auth/me` — authenticated identity, active roles, and effective active permissions; no feature permission is required.
 - `GET /api/admin/v1/users` / `users/:id` — require `user:list` / `user:read`.
@@ -93,13 +92,20 @@ Admin status and the protected System Role marker are derived at request time fr
 the exact active `SuperAdmin` role; neither is stored. Passwords, JWTs, and credential
 material are excluded from repository selections and response DTOs.
 
-The internal System Admin mutation safety foundation is implemented, but no public
-management mutation routes are enabled. It protects the final active System Admin,
-the exact protected role, role/permission assignments, and complete role replacement
-inside retryable serializable transactions. Initial policy prohibits System Admin
-self-removal and self-deactivation. See
-`docs/system-admin-mutation-safety.md` for the concurrency and operational-audit
-contract that future mutation endpoints must use.
+The first account-mutation surface is System-Admin-only, regardless of ordinary
+`user:create` or `user:update` permissions:
+
+- `POST /api/admin/v1/users` creates an account with one or more active roles.
+- `PATCH /api/admin/v1/users/:id` updates only name, email, and username.
+- `POST /api/admin/v1/users/:id/activate` and `/deactivate` change status.
+- `POST` / `DELETE /api/admin/v1/users/:id/roles/:roleId` assign or remove one role.
+- `PUT /api/admin/v1/users/:id/roles` atomically replaces the complete role set.
+
+Creation uses the legacy-compatible bcrypt cost and password-strength rule. Email and
+username are trimmed and lowercased. Password reset, role CRUD, permission CRUD, and
+role-permission mutations remain unavailable. Protected changes run through retryable
+serializable transactions; self-removal/self-deactivation and removal of the final
+active System Admin are rejected. See `docs/system-admin-mutation-safety.md`.
 
 ## Member Directory
 

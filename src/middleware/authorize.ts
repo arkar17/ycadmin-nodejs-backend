@@ -17,3 +17,14 @@ export const requirePermission = (...requiredPermissions: string[]): RequestHand
 
   return next();
 };
+
+/** Restricts security-sensitive account management to a database-hydrated System Admin. */
+export const requireSystemAdmin: RequestHandler = (request, _response, next) => {
+  if (!request.auth) {
+    return next(new AppError({ statusCode: 401, code: 'UNAUTHENTICATED', message: 'Authentication is required.' }));
+  }
+  if (!request.auth.isSystemAdmin) {
+    return next(new AppError({ statusCode: 403, code: 'SYSTEM_ADMIN_REQUIRED', message: 'A current System Admin is required for this operation.' }));
+  }
+  return next();
+};
