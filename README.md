@@ -93,6 +93,14 @@ Admin status and the protected System Role marker are derived at request time fr
 the exact active `SuperAdmin` role; neither is stored. Passwords, JWTs, and credential
 material are excluded from repository selections and response DTOs.
 
+The internal System Admin mutation safety foundation is implemented, but no public
+management mutation routes are enabled. It protects the final active System Admin,
+the exact protected role, role/permission assignments, and complete role replacement
+inside retryable serializable transactions. Initial policy prohibits System Admin
+self-removal and self-deactivation. See
+`docs/system-admin-mutation-safety.md` for the concurrency and operational-audit
+contract that future mutation endpoints must use.
+
 ## Member Directory
 
 `GET /api/admin/v1/members` is registered in `/api/admin/v1` after Prisma-backed, isolated PostgreSQL integration verification. The endpoint supports `name`, `contact`, `limit` (1–100), and `offset`; it requires `member:list`.
@@ -171,7 +179,18 @@ done
 DATABASE_URL="$ADMIN_INTEGRATION_DATABASE_URL" npm run test:integration
 ```
 
-The integration suite accepts only the exact dedicated database name on `localhost`/`127.0.0.1` before running its `TRUNCATE ... CASCADE` fixture reset. Fixtures are created in code with synthetic `example.test` identities; no reference or production records are imported.
+The integration setup replaces the normal application `DATABASE_URL` before Prisma is
+initialized. Its central safety guard accepts only the exact dedicated database name,
+synthetic user, localhost host, and port `55432` before any fixture reset. Fixtures are
+created in code with synthetic `example.test` identities; no reference or production
+records are imported.
+
+The System Admin concurrency verification can be run independently after applying the
+authoritative migrations:
+
+```bash
+npm run test:integration -- src/modules/admin-rbac/rbac-mutation-concurrency.integration.test.ts
+```
 
 ## Commands
 
