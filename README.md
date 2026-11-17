@@ -136,6 +136,22 @@ The verified schema has no current Member-to-Plan relation. `memberPlanId` and t
 
 List and detail require `member-request:list` and `member-request:read`, respectively. Payment proof data is limited to a boolean availability indicator; attachment keys and URLs are never exposed. Legacy Odoo `draft` and `paid` values are rejected rather than being silently mapped. Approval/rejection remains deliberately unimplemented pending an owner-approved transactional lifecycle. See `docs/shared-backend-reference/membership-request-compatibility.md`.
 
+## Payment management
+
+`GET /api/admin/v1/payments` and `GET /api/admin/v1/payments/:id` require
+`payment:list` and `payment:read`. The list supports canonical status/request-type,
+target IDs, amount range, and bounded pagination filters. Responses expose only a
+payment-proof availability flag; raw attachment values and bank credentials are never
+returned.
+
+`POST /api/admin/v1/payments/:id/accept` and `/decline` require `payment:update`.
+Only an initial `DRAFT` decision may change state. Repeating the same decision is an
+idempotent no-op; attempting the opposite terminal decision returns a conflict. The
+Payment decision and mobile in-app Notification row commit in one serializable,
+retryable transaction. Push delivery is post-commit and best effort. Payment review
+does not approve a MemberRequest, change a Member, activate a plan, approve a shop
+request, or update a Shop. See `docs/payment-management.md`.
+
 ## Attendance (read-only)
 
 `GET /api/admin/v1/attendance` requires `attendance:list`. It supports `memberName`/`name`, `memberCode`/`member_code`, `dateFrom`/`date_from`, `dateTo`/`date_to`, `limit` (1–100), and `offset`. Date ranges use the canonical `Attendance.createdAt` instant with Asia/Yangon inclusive-start/exclusive-end calendar boundaries; the legacy string `Attendance.date` is returned only as `recordedDate`.

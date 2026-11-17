@@ -34,6 +34,7 @@ import { PrismaMemberPlanRepository } from '../modules/member-plans/member-plan.
 import { createMemberPlanRouter } from '../modules/member-plans/member-plan.router.js';
 import { PrismaPlanDurationRepository } from '../modules/plan-durations/plan-duration.repository.js';
 import { createPlanDurationRouter } from '../modules/plan-durations/plan-duration.router.js';
+import { createPaymentRouter } from '../modules/payments/payment.router.js';
 import { PrismaShopPlanLevelRepository } from '../modules/shop-plan-levels/shop-plan-level.repository.js';
 import { createShopPlanLevelRouter } from '../modules/shop-plan-levels/shop-plan-level.router.js';
 import { PrismaWorkoutRepository } from '../modules/workouts/workout.repository.js';
@@ -133,6 +134,11 @@ adminV1Router.use(
     adminIdentityRepository: new PrismaAdminIdentityRepository(),
     membershipRequestRepository: new PrismaMembershipRequestRepository(),
   }),
+);
+
+adminV1Router.use(
+  '/payments',
+  createPaymentRouter({ adminIdentityRepository: new PrismaAdminIdentityRepository() }),
 );
 
 adminV1Router.use(
