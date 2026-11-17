@@ -72,7 +72,7 @@ describe('Admin authentication and authorization', () => {
     expect(repository.findActiveAdminById).not.toHaveBeenCalled();
   });
 
-  it('rejects inactive or nonexistent Admin accounts returned by the repository', async () => {
+  it('rejects inactive, nonexistent, or no-active-role Admin accounts returned by the repository', async () => {
     const repository = createRepository(null);
     const response = await request(createProtectedApp(repository))
       .get('/protected')
@@ -87,7 +87,7 @@ describe('Admin authentication and authorization', () => {
     const repository = createRepository({
       id: 2,
       displayName: 'Permission Revoked',
-      roleNames: ['SuperAdmin'],
+      roleNames: ['Synthetic Role'],
       permissionNames: [],
     });
     const response = await request(createProtectedApp(repository))
@@ -102,7 +102,7 @@ describe('Admin authentication and authorization', () => {
     const repository = createRepository({
       id: 3,
       displayName: 'Authorized Admin',
-      roleNames: ['SuperAdmin'],
+      roleNames: ['Synthetic Role'],
       permissionNames: ['member:list'],
     });
     const response = await request(createProtectedApp(repository))
@@ -111,5 +111,69 @@ describe('Admin authentication and authorization', () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ data: { userId: 3 } });
+  });
+
+  it('allows a current SuperAdmin without requiring the endpoint permission', async () => {
+    const repository = createRepository({
+      id: 4,
+      displayName: 'System Admin',
+      roleNames: ['SuperAdmin'],
+      permissionNames: [],
+    });
+    const response = await request(createProtectedApp(repository))
+      .get('/protected')
+      .set('Authorization', `Bearer ${sign({ id: 4, loginType: 'admin' })}`);
+
+    expect(response.status).toBe(200);
+  });
+
+  it('requires the exact case-sensitive SuperAdmin role name for the bypass', async () => {
+    const repository = createRepository({
+      id: 40,
+      displayName: 'Near Match Admin',
+      roleNames: ['superadmin'],
+      permissionNames: [],
+    });
+    const response = await request(createProtectedApp(repository))
+      .get('/protected')
+      .set('Authorization', `Bearer ${sign({ id: 40, loginType: 'admin' })}`);
+
+    expect(response.status).toBe(403);
+  });
+
+  it('removes the SuperAdmin bypass on the next request after the role is removed', async () => {
+    const roleNames = ['SuperAdmin'];
+    const repository: AdminIdentityRepository = {
+      findActiveAdminById: vi.fn(async () => ({
+        id: 5,
+        displayName: 'Changing Admin',
+        roleNames: [...roleNames],
+        permissionNames: [],
+      })),
+    };
+    const app = createProtectedApp(repository);
+    const authorization = `Bearer ${sign({ id: 5, loginType: 'admin' })}`;
+
+    const beforeRemoval = await request(app).get('/protected').set('Authorization', authorization);
+    roleNames.splice(0, 1, 'Ordinary Admin');
+    const afterRemoval = await request(app).get('/protected').set('Authorization', authorization);
+
+    expect(beforeRemoval.status).toBe(200);
+    expect(afterRemoval.status).toBe(403);
+  });
+
+  it('returns an infrastructure error instead of misclassifying a repository failure as an invalid JWT', async () => {
+    const repository: AdminIdentityRepository = {
+      findActiveAdminById: vi.fn(async () => {
+        throw new Error('database unavailable');
+      }),
+    };
+    const response = await request(createProtectedApp(repository))
+      .get('/protected')
+      .set('Authorization', `Bearer ${sign({ id: 6, loginType: 'admin' })}`);
+
+    expect(response.status).toBe(500);
+    expect(response.body.error.code).toBe('INTERNAL_SERVER_ERROR');
+    expect(response.body.error.code).not.toBe('INVALID_TOKEN');
   });
 });

@@ -6,6 +6,7 @@ import {
   PrismaAdminIdentityRepository,
   type AdminIdentityRepository,
 } from '../modules/auth/admin-identity.repository.js';
+import { hasSystemAdminRole } from '../modules/auth/admin-access-policy.js';
 import { AppError } from '../shared/app-error.js';
 
 export type SharedAdminTokenClaims = jwt.JwtPayload & { id: number; loginType: 'admin' };
@@ -24,32 +25,43 @@ export const createAuthenticateAdmin = (repository: AdminIdentityRepository): Re
     return next(new AppError({ statusCode: 401, code: 'UNAUTHENTICATED', message: 'Authentication is required.' }));
   }
 
+  let decoded: string | jwt.JwtPayload;
   try {
-    const decoded = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] });
-    if (
-      typeof decoded === 'string' ||
-      decoded.loginType !== 'admin' ||
-      !Number.isSafeInteger(decoded.id) ||
-      decoded.id <= 0
-    ) {
-      return next(new AppError({ statusCode: 401, code: 'INVALID_TOKEN', message: 'Authentication token is invalid or expired.' }));
-    }
-
-    const identity = await repository.findActiveAdminById(decoded.id);
-    if (!identity) {
-      return next(new AppError({ statusCode: 401, code: 'UNAUTHENTICATED', message: 'Authentication is required.' }));
-    }
-
-    request.auth = {
-      userId: identity.id,
-      displayName: identity.displayName,
-      roles: identity.roleNames,
-      permissions: identity.permissionNames,
-    };
-    return next();
+    decoded = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] });
   } catch {
     return next(new AppError({ statusCode: 401, code: 'INVALID_TOKEN', message: 'Authentication token is invalid or expired.' }));
   }
+
+  if (
+    typeof decoded === 'string' ||
+    decoded.loginType !== 'admin' ||
+    !Number.isSafeInteger(decoded.id) ||
+    decoded.id <= 0
+  ) {
+    return next(new AppError({ statusCode: 401, code: 'INVALID_TOKEN', message: 'Authentication token is invalid or expired.' }));
+  }
+
+  let identity: Awaited<ReturnType<AdminIdentityRepository['findActiveAdminById']>>;
+  try {
+    identity = await repository.findActiveAdminById(decoded.id);
+  } catch (error) {
+    // Infrastructure failures are not authentication failures. Preserve the
+    // original error for the centralized handler and structured request log.
+    return next(error);
+  }
+
+  if (!identity) {
+    return next(new AppError({ statusCode: 401, code: 'UNAUTHENTICATED', message: 'Authentication is required.' }));
+  }
+
+  request.auth = {
+    userId: identity.id,
+    displayName: identity.displayName,
+    roles: identity.roleNames,
+    permissions: identity.permissionNames,
+    isSystemAdmin: hasSystemAdminRole(identity.roleNames),
+  };
+  return next();
 };
 
 /** Uses the verified schema-backed User/RBAC repository in production wiring. */

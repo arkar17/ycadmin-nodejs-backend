@@ -4,7 +4,7 @@
 
 The copied mobile backend’s Admin sign-in is `POST /api/admin/v1/auth/sign-in` (`routes/admin/v1/auth.route.ts:8-12`). Its controller finds an active `User` by email/username, verifies `User.password`, and signs `{ id, loginType: "admin" }` (`app/controllers/admin/v1/auth.controller.ts:29-71`). The helper uses `bcrypt.compareSync` against bcrypt cost-10 hashes and `jsonwebtoken.sign` with the configured secret and a 30-day default (`app/helpers/helper.ts:11-27`).
 
-The isolated Admin API now uses the same credential format and claim contract, with asynchronous bcrypt 6 verification and an explicit HS256 algorithm restriction. It does not copy the reference controller’s `SuperAdmin`-only login condition: the verified shared schema represents Admin accounts as active `User` records with roles/permissions, and protected API authorization rehydrates those active assignments on every request.
+The isolated Admin API uses the same credential format and claim contract, with asynchronous bcrypt 6 verification and an explicit HS256 algorithm restriction. Login requires an active `User` with at least one active Role. Protected API authorization rehydrates active role and permission assignments on every request. A current active `SuperAdmin` role is the approved System Admin compatibility policy and bypasses endpoint permission checks; other roles use their effective permission union.
 
 ## Local endpoint contract
 
@@ -28,7 +28,7 @@ Success (`200`):
 }
 ```
 
-Invalid, nonexistent, and inactive accounts all receive the same `401 INVALID_CREDENTIALS` envelope. Invalid body fields receive the established `422 VALIDATION_ERROR` envelope. The response has no password, hash, roles, or permissions. Existing protected routes continue to validate the issued token as HS256, require `loginType === "admin"`, require an active current User, and resolve current active permissions from PostgreSQL.
+Invalid, nonexistent, inactive, and no-active-role accounts all receive the same `401 INVALID_CREDENTIALS` envelope. Invalid body fields receive the established `422 VALIDATION_ERROR` envelope. The response has no password, hash, roles, permissions, or System Admin state. Existing protected routes validate the issued token as HS256, require `loginType === "admin"`, require an active current User with an active Role, and resolve current active roles and permissions from PostgreSQL.
 
 The default `JWT_EXPIRES_IN=30d` matches the verified shared Admin issuer. It is validated as a positive unit duration and may be reduced only through a coordinated issuer/client/key-rotation decision. Tokens carry an `exp` claim and protected routes reject expired or forged values.
 

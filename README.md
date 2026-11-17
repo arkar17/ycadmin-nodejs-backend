@@ -70,11 +70,11 @@ empty `prisma/migrations-disabled/` directory.
 
 ## Authentication foundation
 
-The API accepts only bearer tokens using the verified shared payload shape `{ id, loginType: "admin" }`. It rehydrates the active `User` and active role/permission assignments from Prisma on each protected request; permissions follow the shared convention (for example, `member:list`). It does not implement token revocation, refresh, issuer/audience claims, or key rotation because those production conventions remain owned by the shared backend.
+The API accepts only bearer tokens using the verified shared payload shape `{ id, loginType: "admin" }`. It rehydrates the active `User` and active role/permission assignments from Prisma on each protected request. A current active `SuperAdmin` role bypasses endpoint permission checks; other Admins receive the deduplicated union of active permissions from all active roles. It does not implement token revocation, refresh, issuer/audience claims, or key rotation because compatibility is intentionally preserved for this stage. See `docs/admin-authentication-rbac-policy.md`.
 
 ## Local Admin login
 
-`POST /api/admin/v1/auth/login` accepts `{ "emailOrUsername", "password" }`, verifies the existing bcrypt cost-10 `User.password` hash, requires an active User, and returns only an expiring HS256 Admin token with `{id, loginType:"admin"}`. It does not grant roles or permissions; protected requests always hydrate current database-backed RBAC. Login is locally throttled per IP (10 attempts / 15 minutes) and must move to trusted ingress/shared rate limiting before scaled production use.
+`POST /api/admin/v1/auth/login` accepts `{ "emailOrUsername", "password" }`, verifies the existing bcrypt cost-10 `User.password` hash, and requires both an active User and at least one active Role. It returns only an expiring HS256 Admin token with `{id, loginType:"admin"}`. It does not grant roles or permissions; protected requests always hydrate current database-backed RBAC. Login is locally throttled per IP (10 attempts / 15 minutes) and must move to trusted ingress/shared rate limiting before scaled production use.
 
 There is no token revocation or server-side logout mechanism in the verified shared design. Browser logout can only clear a memory-held token. See `docs/shared-backend-reference/admin-authentication-stage-3f.md`.
 

@@ -13,12 +13,13 @@ export interface AdminLoginRepository {
   findActiveByEmailOrUsername(identifier: string): Promise<AdminLoginAccount | null>;
 }
 
-/** User is the verified shared Admin identity table; active status is mandatory. */
+/** Login eligibility requires an active User with at least one active Role. */
 export class PrismaAdminLoginRepository implements AdminLoginRepository {
   public async findActiveByEmailOrUsername(identifier: string): Promise<AdminLoginAccount | null> {
     return getPrismaClient().user.findFirst({
       where: {
         status: Status.ACTIVE,
+        roles: { some: { role: { status: Status.ACTIVE } } },
         OR: [{ email: identifier }, { username: identifier }],
       },
       select: { id: true, name: true, username: true, password: true },

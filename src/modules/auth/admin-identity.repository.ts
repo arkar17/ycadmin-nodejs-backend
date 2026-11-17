@@ -20,7 +20,11 @@ export interface AdminIdentityRepository {
 export class PrismaAdminIdentityRepository implements AdminIdentityRepository {
   public async findActiveAdminById(id: number): Promise<AdminIdentity | null> {
     const user = await getPrismaClient().user.findFirst({
-      where: { id, status: Status.ACTIVE },
+      where: {
+        id,
+        status: Status.ACTIVE,
+        roles: { some: { role: { status: Status.ACTIVE } } },
+      },
       select: {
         id: true,
         name: true,

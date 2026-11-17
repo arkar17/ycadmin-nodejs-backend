@@ -8,6 +8,8 @@ export const requirePermission = (...requiredPermissions: string[]): RequestHand
     return next(new AppError({ statusCode: 401, code: 'UNAUTHENTICATED', message: 'Authentication is required.' }));
   }
 
+  if (request.auth.isSystemAdmin) return next();
+
   const authorized = requiredPermissions.every((permission) => request.auth?.permissions.includes(permission));
   if (!authorized) {
     return next(new AppError({ statusCode: 403, code: 'FORBIDDEN', message: 'You do not have permission to perform this action.' }));

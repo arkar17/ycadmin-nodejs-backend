@@ -40,14 +40,17 @@ describe('Admin login router', () => {
     expect(new Date(response.body.data.expiresAt).getTime()).toBe(claims.exp! * 1000);
   });
 
-  it('uses generic failures for wrong credentials, inactive/missing accounts, and malformed bodies', async () => {
+  it('uses generic failures for wrong credentials, inactive/missing/no-active-role accounts, and malformed bodies', async () => {
     const loginAccount = await account();
     const wrongPassword = await request(await app({ findActiveByEmailOrUsername: vi.fn(async () => loginAccount) })).post('/api/admin/v1/auth/login').send({ emailOrUsername: 'login-admin', password: 'incorrect' });
     const inactive = await request(await app({ findActiveByEmailOrUsername: vi.fn(async () => null) })).post('/api/admin/v1/auth/login').send({ emailOrUsername: 'inactive-admin', password });
+    const noActiveRole = await request(await app({ findActiveByEmailOrUsername: vi.fn(async () => null) })).post('/api/admin/v1/auth/login').send({ emailOrUsername: 'no-role-login', password });
     const malformed = await request(await app({ findActiveByEmailOrUsername: vi.fn() })).post('/api/admin/v1/auth/login').send({ username: 'login-admin', password, extra: true });
     expect(wrongPassword.body.error.code).toBe('INVALID_CREDENTIALS');
     expect(inactive.body.error.code).toBe('INVALID_CREDENTIALS');
+    expect(noActiveRole.body.error.code).toBe('INVALID_CREDENTIALS');
     expect(wrongPassword.body.error.message).toBe(inactive.body.error.message);
+    expect(noActiveRole.body.error.message).toBe(inactive.body.error.message);
     expect(malformed.status).toBe(422);
   });
 

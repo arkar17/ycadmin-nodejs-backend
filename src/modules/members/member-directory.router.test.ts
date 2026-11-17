@@ -54,7 +54,7 @@ describe('Member Directory Stage 1 router', () => {
         findActiveAdminById: vi.fn(async () => ({
           id: 1,
           displayName: 'No Permission',
-          roleNames: ['SuperAdmin'],
+          roleNames: ['Synthetic Role'],
           permissionNames: [],
         })),
       }),

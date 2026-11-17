@@ -11,6 +11,7 @@ declare global {
         displayName: string;
         roles: string[];
         permissions: string[];
+        isSystemAdmin: boolean;
       };
     }
   }
