@@ -7,5 +7,8 @@
  */
 export const SYSTEM_ADMIN_ROLE_NAME = 'SuperAdmin' as const;
 
+export const isSystemAdminRoleName = (roleName: string): boolean =>
+  roleName === SYSTEM_ADMIN_ROLE_NAME;
+
 export const hasSystemAdminRole = (roleNames: readonly string[]): boolean =>
-  roleNames.includes(SYSTEM_ADMIN_ROLE_NAME);
+  roleNames.some(isSystemAdminRoleName);

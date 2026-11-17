@@ -1,9 +1,17 @@
 import { Router } from 'express';
 
 import { attendanceQrCryptoFromEnvironment } from '../config/attendance-qr.js';
+import { PrismaAdminPermissionRepository } from '../modules/admin-permissions/admin-permission.repository.js';
+import { createAdminPermissionRouter } from '../modules/admin-permissions/admin-permission.router.js';
+import { PrismaAdminRoleRepository } from '../modules/admin-roles/admin-role.repository.js';
+import { createAdminRoleRouter } from '../modules/admin-roles/admin-role.router.js';
+import { PrismaAdminUserRepository } from '../modules/admin-users/admin-user.repository.js';
+import { createAdminUserRouter } from '../modules/admin-users/admin-user.router.js';
+import { PrismaAdminIdentityRepository } from '../modules/auth/admin-identity.repository.js';
 import { PrismaAdminLoginRepository } from '../modules/auth/admin-login.repository.js';
 import { createAuthRouter } from '../modules/auth/auth.router.js';
-import { PrismaAdminIdentityRepository } from '../modules/auth/admin-identity.repository.js';
+import { PrismaCurrentAdminRepository } from '../modules/auth/current-admin.repository.js';
+import { createCurrentAdminRouter } from '../modules/auth/current-admin.router.js';
 import { PrismaAttendanceRepository } from '../modules/attendance/attendance.repository.js';
 import { createAttendanceQrRouter } from '../modules/attendance/attendance-qr.router.js';
 import { AttendanceQrCredentialService, UnavailableAttendanceQrCredentialService } from '../modules/attendance/attendance-qr-credential.service.js';
@@ -39,6 +47,40 @@ adminV1Router.use('/health', healthRouter);
 // This is deliberately the only unauthenticated Admin route besides health.
 // It verifies active User credentials but never assigns roles or permissions.
 adminV1Router.use('/auth', createAuthRouter({ adminLoginRepository: new PrismaAdminLoginRepository() }));
+
+// The identity endpoint rehydrates roles and effective permissions from the
+// database. It intentionally has no feature-permission requirement.
+adminV1Router.use(
+  '/auth',
+  createCurrentAdminRouter({
+    adminIdentityRepository: new PrismaAdminIdentityRepository(),
+    currentAdminRepository: new PrismaCurrentAdminRepository(),
+  }),
+);
+
+adminV1Router.use(
+  '/users',
+  createAdminUserRouter({
+    adminIdentityRepository: new PrismaAdminIdentityRepository(),
+    adminUserRepository: new PrismaAdminUserRepository(),
+  }),
+);
+
+adminV1Router.use(
+  '/roles',
+  createAdminRoleRouter({
+    adminIdentityRepository: new PrismaAdminIdentityRepository(),
+    adminRoleRepository: new PrismaAdminRoleRepository(),
+  }),
+);
+
+adminV1Router.use(
+  '/permissions',
+  createAdminPermissionRouter({
+    adminIdentityRepository: new PrismaAdminIdentityRepository(),
+    adminPermissionRepository: new PrismaAdminPermissionRepository(),
+  }),
+);
 
 // `dashboard:read` is a proposed permission absent from the shared catalog today.
 // This route fails closed until the owner provisions it to an Admin role.

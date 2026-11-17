@@ -78,6 +78,21 @@ The API accepts only bearer tokens using the verified shared payload shape `{ id
 
 There is no token revocation or server-side logout mechanism in the verified shared design. Browser logout can only clear a memory-held token. See `docs/shared-backend-reference/admin-authentication-stage-3f.md`.
 
+## Admin management (read-only)
+
+The following endpoints expose safe views of the existing shared RBAC records. They
+do not create, update, delete, activate, deactivate, or assign anything:
+
+- `GET /api/admin/v1/auth/me` — authenticated identity, active roles, and effective active permissions; no feature permission is required.
+- `GET /api/admin/v1/users` / `users/:id` — require `user:list` / `user:read`.
+- `GET /api/admin/v1/roles` / `roles/:id` — require `role:list` / `role:read`.
+- `GET /api/admin/v1/permissions` / `permissions/:id` — require `permission:list` / `permission:read`.
+
+All list routes use bounded `limit`/`offset` pagination and strict filters. System
+Admin status and the protected System Role marker are derived at request time from
+the exact active `SuperAdmin` role; neither is stored. Passwords, JWTs, and credential
+material are excluded from repository selections and response DTOs.
+
 ## Member Directory
 
 `GET /api/admin/v1/members` is registered in `/api/admin/v1` after Prisma-backed, isolated PostgreSQL integration verification. The endpoint supports `name`, `contact`, `limit` (1–100), and `offset`; it requires `member:list`.

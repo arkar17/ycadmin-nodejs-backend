@@ -53,3 +53,12 @@ the next protected request without issuing another JWT.
 - Authenticated normal Admins missing a route permission return `403`.
 - Repository/database failures are propagated to the central infrastructure error
   handler and are never converted into `401 INVALID_TOKEN`.
+
+## Read-only management surface
+
+The current management foundation is intentionally read-only. `/auth/me` requires
+authentication only; user, role, and permission catalogue routes require their
+existing `resource:list` or `resource:read` permission, with the normal System Admin
+bypass. Responses are explicit DTOs and never expose `User.password`, tokens, or
+relationship-row internals. Mutation endpoints and last-System-Admin transactional
+protections remain deferred to the next management phase.
