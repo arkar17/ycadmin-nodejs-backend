@@ -20,6 +20,28 @@ const environmentSchema = z.object({
   // closed until both are supplied by an approved secret provider.
   ATTENDANCE_QR_ENCRYPTION_KEY: optionalSecret,
   ATTENDANCE_QR_HMAC_KEY: optionalSecret,
+  // Payment push (FCM) is opt-in. Cross-field requirements are validated by
+  // src/config/push.ts so error messages can stay fixed and value-free.
+  PAYMENT_PUSH_ENABLED: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.enum(['true', 'false'], { message: 'PAYMENT_PUSH_ENABLED must be true or false.' }).default('false'),
+  ).transform((value) => value === 'true'),
+  FIREBASE_CREDENTIAL_SOURCE: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.enum(['service_account', 'application_default'], {
+      message: 'FIREBASE_CREDENTIAL_SOURCE must be service_account or application_default.',
+    }).default('service_account'),
+  ),
+  FIREBASE_SERVICE_ACCOUNT_JSON_BASE64: optionalSecret,
+  FIREBASE_PROJECT_ID: optionalSecret,
+  PAYMENT_PUSH_TIMEOUT_MS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.coerce.number({ message: 'PAYMENT_PUSH_TIMEOUT_MS must be an integer between 500 and 15000.' })
+      .int('PAYMENT_PUSH_TIMEOUT_MS must be an integer between 500 and 15000.')
+      .min(500, 'PAYMENT_PUSH_TIMEOUT_MS must be an integer between 500 and 15000.')
+      .max(15000, 'PAYMENT_PUSH_TIMEOUT_MS must be an integer between 500 and 15000.')
+      .default(5000),
+  ),
 });
 
 const parsedEnvironment = environmentSchema.safeParse(process.env);

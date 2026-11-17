@@ -43,6 +43,8 @@ Replace the placeholder `JWT_SECRET` in `.env` with a local development secret o
 
 Permanent attendance QR management also requires two approved-secret-manager values: canonical-base64 `ATTENDANCE_QR_ENCRYPTION_KEY` (exactly 32 decoded bytes for AES-256-GCM) and `ATTENDANCE_QR_HMAC_KEY` (at least 32 decoded bytes). Do not place production values in `.env`, logs, database rows, or source control. If absent, the QR endpoints fail closed with `503 QR_CREDENTIAL_UNAVAILABLE`.
 
+Payment push (FCM) is disabled by default (`PAYMENT_PUSH_ENABLED=false`). Enabling it requires Firebase credentials from the secret manager (`FIREBASE_SERVICE_ACCOUNT_JSON_BASE64`, or Application Default Credentials with `FIREBASE_PROJECT_ID`); invalid enabled configuration fails startup. Never commit credential JSON or copy the Mobile API's Firebase file. See `docs/payment-management.md`.
+
 Before changing schema-backed code, synchronize from the authoritative repository and
 run the compatibility check:
 

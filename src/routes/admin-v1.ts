@@ -1,6 +1,9 @@
 import { Router } from 'express';
 
 import { attendanceQrCryptoFromEnvironment } from '../config/attendance-qr.js';
+import { env } from '../config/env.js';
+import { logger } from '../config/logger.js';
+import { pushConfigFromEnvironment } from '../config/push.js';
 import { PrismaAdminPermissionRepository } from '../modules/admin-permissions/admin-permission.repository.js';
 import { createAdminPermissionRouter } from '../modules/admin-permissions/admin-permission.router.js';
 import { PrismaAdminRoleRepository } from '../modules/admin-roles/admin-role.repository.js';
@@ -35,6 +38,7 @@ import { createMemberPlanRouter } from '../modules/member-plans/member-plan.rout
 import { PrismaPlanDurationRepository } from '../modules/plan-durations/plan-duration.repository.js';
 import { createPlanDurationRouter } from '../modules/plan-durations/plan-duration.router.js';
 import { createPaymentRouter } from '../modules/payments/payment.router.js';
+import { createPaymentPushNotificationService } from '../modules/payments/payment-push.factory.js';
 import { PrismaShopPlanLevelRepository } from '../modules/shop-plan-levels/shop-plan-level.repository.js';
 import { createShopPlanLevelRouter } from '../modules/shop-plan-levels/shop-plan-level.router.js';
 import { PrismaWorkoutRepository } from '../modules/workouts/workout.repository.js';
@@ -136,9 +140,19 @@ adminV1Router.use(
   }),
 );
 
+// Payment push is disabled unless PAYMENT_PUSH_ENABLED=true. When enabled,
+// invalid Firebase configuration fails startup here with a sanitized error;
+// the Firebase SDK is never loaded while push is disabled.
+const paymentPushNotificationService = await createPaymentPushNotificationService({
+  config: pushConfigFromEnvironment(env),
+  log: logger,
+});
 adminV1Router.use(
   '/payments',
-  createPaymentRouter({ adminIdentityRepository: new PrismaAdminIdentityRepository() }),
+  createPaymentRouter({
+    adminIdentityRepository: new PrismaAdminIdentityRepository(),
+    paymentPushNotificationService,
+  }),
 );
 
 adminV1Router.use(

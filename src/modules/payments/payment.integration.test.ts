@@ -12,6 +12,7 @@ import { disconnectDatabase, getPrismaClient } from '../../database/prisma.js';
 import { errorHandler } from '../../middleware/error-handler.js';
 import { assertIsolatedIntegrationDatabaseUrl } from '../../tests/integration-database-safety.js';
 import { PrismaAdminIdentityRepository } from '../auth/admin-identity.repository.js';
+import { FcmPaymentPushNotificationService } from './fcm-payment-push.service.js';
 import type { PaymentPushNotificationService } from './payment-push.service.js';
 import { createPaymentRouter } from './payment.router.js';
 
@@ -250,6 +251,41 @@ describe('Payment management on isolated PostgreSQL', () => {
     expect(repeated.body.data.changed).toBe(false);
     expect(opposite.status).toBe(409);
     expect(await prisma.notification.count({ where: { resId: fixture.memberPaymentId } })).toBe(1);
+  });
+
+  it('keeps Payment and Notification committed when the FCM adapter fails (fake sender, no Firebase)', async () => {
+    const sender = {
+      send: vi.fn(async () => {
+        throw Object.assign(new Error('synthetic provider failure'), { code: 'messaging/server-unavailable' });
+      }),
+    };
+    const push = new FcmPaymentPushNotificationService(sender, { timeoutMs: 5000 }, { info: vi.fn() });
+    const response = await request(app(push))
+      .post(`/api/admin/v1/payments/${fixture.memberPaymentId}/accept`)
+      .set('Authorization', `Bearer ${token(fixture.firstAdminId)}`)
+      .send({});
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({ changed: true, payment: { status: 'ACCEPT' } });
+    expect(sender.send).toHaveBeenCalledOnce();
+    expect(sender.send).toHaveBeenCalledWith({
+      token: 'synthetic-fcm-token',
+      notification: { title: 'Your payment has been accepted.', body: 'Your payment has been accepted.' },
+    });
+    const prisma = getPrismaClient();
+    const [payment, notifications] = await Promise.all([
+      prisma.payment.findUniqueOrThrow({ where: { id: fixture.memberPaymentId }, select: { status: true } }),
+      prisma.notification.findMany({ where: { resId: fixture.memberPaymentId } }),
+    ]);
+    expect(payment.status).toBe(PaymentStatus.ACCEPT);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({
+      title: 'Your payment has been accepted.',
+      message: 'Your payment has been accepted.',
+      model: 'system',
+      type: 'SYSTEM',
+      toUserId: fixture.memberId,
+    });
+    expect(await prisma.memberFcmToken.count({ where: { memberId: fixture.memberId } })).toBe(1);
   });
 
   it('declines with trimmed reason and leaves Shop/ShopUpgradeRequest unchanged', async () => {

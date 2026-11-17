@@ -12,6 +12,7 @@ import { errorHandler } from '../../middleware/error-handler.js';
 import { AppError } from '../../shared/app-error.js';
 import { SYSTEM_ADMIN_ROLE_NAME } from '../auth/admin-access-policy.js';
 import type { AdminIdentityRepository } from '../auth/admin-identity.repository.js';
+import { FcmPaymentPushNotificationService } from './fcm-payment-push.service.js';
 import type { PaymentPushNotificationService } from './payment-push.service.js';
 import type { PaymentRecord, PaymentRepository } from './payment.repository.js';
 import { createPaymentRouter } from './payment.router.js';
@@ -148,6 +149,18 @@ describe('Payment router', () => {
     expect(failed.status).toBe(500);
     expect(succeeded.status).toBe(200);
     expect(succeeded.body.data.changed).toBe(true);
+  });
+
+  it('returns the committed decision over HTTP when the FCM adapter fails', async () => {
+    const sender = { send: vi.fn(async () => { throw Object.assign(new Error('never-return-this-token'), { code: 'messaging/registration-token-not-registered' }); }) };
+    const push = new FcmPaymentPushNotificationService(sender, { timeoutMs: 5000 }, { info: vi.fn() });
+    const accepted = await request(app(repository(), undefined, [], push)).post('/api/admin/v1/payments/7/accept').set(auth()).send({});
+    const declined = await request(app(repository(), undefined, [], push)).post('/api/admin/v1/payments/7/decline').set(auth()).send({ reason: 'Invalid proof' });
+    expect([accepted.status, declined.status]).toEqual([200, 200]);
+    expect(accepted.body.data).toMatchObject({ changed: true, payment: { status: 'ACCEPT' } });
+    expect(declined.body.data).toMatchObject({ changed: true, payment: { status: 'DECLINE' } });
+    expect(sender.send).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify([accepted.body, declined.body])).not.toContain('never-return-this-token');
   });
 
   it('passes deterministic state conflicts through the standard error envelope', async () => {
