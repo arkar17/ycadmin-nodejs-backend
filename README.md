@@ -1,6 +1,18 @@
 # YC Fitness Admin API v1
 
-Infrastructure foundation for the YC Fitness Admin REST API. The current frontend uses Odoo; this repository is the separate local Admin API workspace that will eventually share the mobile backend's established PostgreSQL and Prisma ownership model.
+Infrastructure foundation for the YC Fitness Admin REST API. The current frontend uses Odoo; this repository is a separate Admin API workspace and a consumer of the PostgreSQL schema owned by `ycfitness-api`.
+
+## Database ownership — read this first
+
+`ycfitness-api` on `feature/modify` currently owns the shared PostgreSQL schema and
+Prisma migration history. This Admin repository must not create, rewrite, or deploy
+shared migrations. Its configured Prisma migration path is deliberately empty.
+
+`prisma/schema.prisma` contains the current authoritative schema plus a small,
+explicitly marked set of Admin attendance proposals needed by existing experimental
+code. Those proposal declarations are not approved shared schema. Their SQL is
+quarantined under `prisma/proposals/` and may be used only for the dedicated localhost
+integration database.
 
 ## Current scope
 
@@ -11,9 +23,9 @@ Implemented now:
 - Database-independent `GET /api/admin/v1/health` returning `{ "data": { "status": "ok" } }`.
 - Standard data, collection, validation, and error response infrastructure with request IDs.
 - Lazy Prisma Client boundary that does not instantiate or connect during startup.
-- Empty module boundaries for auth, members, membership requests, plans, types, durations, bank information, attendance, QR, feedback, workouts, and dashboard.
+- Feature modules for auth, members, membership requests, plans, types, durations, bank information, attendance, QR, feedback, workouts, and dashboard.
 
-Not implemented: login/session issuance, membership approval, QR replacement/revocation, uploads, dashboard statistics, production access, deployment, and frontend changes.
+Not implemented: membership approval, QR replacement/revocation, uploads, production access, deployment, and frontend migration.
 
 ## Requirements
 
@@ -31,13 +43,30 @@ Replace the placeholder `JWT_SECRET` in `.env` with a local development secret o
 
 Permanent attendance QR management also requires two approved-secret-manager values: canonical-base64 `ATTENDANCE_QR_ENCRYPTION_KEY` (exactly 32 decoded bytes for AES-256-GCM) and `ATTENDANCE_QR_HMAC_KEY` (at least 32 decoded bytes). Do not place production values in `.env`, logs, database rows, or source control. If absent, the QR endpoints fail closed with `503 QR_CREDENTIAL_UNAVAILABLE`.
 
-The Admin schema is synchronized from the verified mobile-backend schema. Generate its client after confirming the schema revision and local database URL:
+Before changing schema-backed code, synchronize from the authoritative repository and
+run the compatibility check:
+
+```bash
+npm run schema:check
+# Override the default sibling checkout when needed:
+YC_FITNESS_API_PATH=/absolute/path/to/ycfitness-api npm run schema:check
+```
+
+The check is read-only. It requires every authoritative model and enum to remain
+compatible while allowing only the attendance proposals enumerated in the checker.
+After the check passes, generate the Admin client if needed:
 
 ```bash
 npm run prisma:generate
 ```
 
-This generation step does not connect to PostgreSQL or apply migrations. Do not run Prisma migration, push, reset, or seed commands against shared, staging, or production databases. The checked-in migration history is an unchanged copy of the verified reference backend history and is used only for the dedicated local integration database described below.
+Client generation does not connect to PostgreSQL or apply migrations. Do not run
+Prisma migration, push, reset, or seed commands from this repository against shared,
+staging, or production databases. The files under `prisma/migrations/` are a stale
+historical audit snapshot, not deployable history. They include a known SQL/checksum
+conflict at `20260804140000_add_payment_status_draft` and omit newer authoritative
+migrations. `prisma.config.ts` therefore points migration commands at the intentionally
+empty `prisma/migrations-disabled/` directory.
 
 ## Authentication foundation
 
@@ -113,10 +142,18 @@ The shared permission catalog already defines `bank-information:list`, `bank-inf
 
 `docker-compose.integration.yml` defines the only database used by integration tests: PostgreSQL 16 at `127.0.0.1:55432`, database `yc_fitness_admin_integration`, with local-only synthetic credentials. It is not configured through `.env` and must never be pointed at a shared database.
 
+Bootstrap it in two explicit stages: apply migrations from the authoritative
+`ycfitness-api` checkout, then apply the quarantined Admin proposal SQL directly.
+Never substitute a shared database URL.
+
 ```bash
 docker compose -f docker-compose.integration.yml up -d postgres-integration
-DATABASE_URL='postgresql://yc_fitness_integration:yc_fitness_integration_local_only@127.0.0.1:55432/yc_fitness_admin_integration?schema=public' npx prisma migrate deploy --schema prisma/schema.prisma
-npm run test:integration
+export ADMIN_INTEGRATION_DATABASE_URL='postgresql://yc_fitness_integration:yc_fitness_integration_local_only@127.0.0.1:55432/yc_fitness_admin_integration?schema=public'
+(cd ../ycfitness-api && DATABASE_URL="$ADMIN_INTEGRATION_DATABASE_URL" npx prisma migrate deploy --schema prisma/schema.prisma)
+for proposal in prisma/proposals/attendance/migrations/*.sql; do
+  psql "$ADMIN_INTEGRATION_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$proposal"
+done
+DATABASE_URL="$ADMIN_INTEGRATION_DATABASE_URL" npm run test:integration
 ```
 
 The integration suite accepts only the exact dedicated database name on `localhost`/`127.0.0.1` before running its `TRUNCATE ... CASCADE` fixture reset. Fixtures are created in code with synthetic `example.test` identities; no reference or production records are imported.
@@ -128,6 +165,7 @@ npm run dev        # start the TypeScript development server
 npm run build      # compile src/ to dist/
 npm run typecheck  # run TypeScript checks without output
 npm run prisma:generate # generate Prisma Client only; no migration or database connection
+npm run schema:check # compare with the authoritative sibling schema; read-only
 npm test           # run infrastructure tests once
 npm run test:integration # run isolated PostgreSQL integration tests
 npm run test:watch # run Vitest interactively
@@ -143,14 +181,24 @@ src/
   config/                environment and logging
   database/              lazy Prisma boundary (no schema)
   middleware/            validation, authentication scaffold, errors
-  modules/               domain boundaries; feature logic intentionally absent
+  modules/               domain routers/controllers/services/repositories/schemas
   routes/                /api/admin/v1 registration
   shared/                API envelopes and shared errors
   tests/                 Vitest setup
-prisma/                  schema-ownership guidance only
+prisma/                  consumed schema, inert history snapshot, and proposals
 docs/                    architecture notes
 ```
 
 ## Before feature development
 
-Obtain the authoritative shared mobile-backend Prisma schema, migrations, authentication/role conventions, media abstraction, audit convention, membership state machine, attendance policy, and QR validation contract. The planning documents in the Admin frontend identify these as required discovery work; frontend/Odoo field names must not be treated as database facts.
+Synchronize and check the authoritative `ycfitness-api` schema before schema-backed
+feature work. Any proposed database change must be reviewed and re-authored in the
+authoritative repository by its owner; frontend/Odoo fields must not be treated as
+database facts.
+
+## Prisma dependency note
+
+The repository currently uses Prisma CLI `7.5.0` with `@prisma/client` and
+`@prisma/adapter-pg` `7.3.0`. This task deliberately does not change dependencies.
+A separate dependency-validation task should select one Prisma release, verify code
+generation/build/integration behavior, then pin the CLI, client, and adapter together.

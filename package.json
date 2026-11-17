@@ -13,6 +13,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
+    "schema:check": "node scripts/check-prisma-schema-drift.mjs",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest"

@@ -76,11 +76,16 @@ model User {
   shopUpgradeRequestsRejected ShopUpgradeRequest[] @relation("ShopUpgradeRequestRejectedBy")
   attendancesCreated          Attendance[]         @relation("AttendanceCreatedBy")
   attendancesUpdated          Attendance[]         @relation("AttendanceUpdatedBy")
+  /// @admin-proposal attendance-qr
   attendanceQrCredentialsCreated AttendanceQrCredential[] @relation("AttendanceQrCredentialCreatedBy")
+  /// @admin-proposal attendance-qr
   attendanceQrCredentialsReplaced AttendanceQrCredential[] @relation("AttendanceQrCredentialReplacedBy")
+  /// @admin-proposal attendance-qr
   attendanceQrCredentialsRevoked AttendanceQrCredential[] @relation("AttendanceQrCredentialRevokedBy")
   reportCategoryCreated       ReportCategory[]     @relation("ReportCategoryCreatedBy")
   reportCategoryUpdated       ReportCategory[]     @relation("ReportCategoryUpdatedBy")
+  scheduledNotificationsCreated ScheduledNotification[] @relation("ScheduledNotificationCreatedBy")
+  scheduledNotificationsUpdated ScheduledNotification[] @relation("ScheduledNotificationUpdatedBy")
 }
 
 model Role {
@@ -272,6 +277,8 @@ model Member {
   status     Status     @default(ACTIVE)
   clientType ClientType @default(user)
   isSupport  Boolean    @default(false)
+  /// iOS PushKit VoIP token for incoming call rings
+  voipToken  String?
 
   createdById Int?
   updatedById Int?
@@ -319,10 +326,14 @@ model Member {
   fitnessSurveys             MemberFitnessSurvey[]
   notificationsCreated       Notification[]             @relation("NotificationCreateUid")
   notificationsReceived      Notification[]             @relation("NotificationToUser")
+  scheduledNotifications     ScheduledNotification[]    @relation("ScheduledNotificationToUser")
   following                  Follow[]                   @relation("MemberFollowing")
   followers                  Follow[]                   @relation("MemberFollowers")
   clientFeedbacks            ClientFeedback[]
   postMediaHistories         MemberPostMediaHistory[]
+  agoraCallsStarted          AgoraCall[]                @relation("AgoraCallCaller")
+  agoraCallMemberships       AgoraCallMember[]
+  agoraCallsHidden           AgoraCallHidden[]
 }
 
 model MemberFcmToken {
@@ -1012,8 +1023,10 @@ model Attendance {
   id       Int     @id @default(autoincrement())
   memberId Int
   member   Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  /// @admin-proposal attendance-foundation: authoritative field is `date String`
   date     String @default("")
   qrToken  String?
+  /// @admin-proposal attendance-foundation
   source   AttendanceSource @default(LEGACY)
 
   createdById Int?
@@ -1026,6 +1039,7 @@ model Attendance {
   @@index([memberId, createdAt])
 }
 
+/// @admin-proposal-block attendance-qr
 model AttendanceQrCredential {
   id                 Int                          @id @default(autoincrement())
   status             AttendanceQrCredentialStatus @default(ACTIVE)
@@ -1045,12 +1059,14 @@ model AttendanceQrCredential {
   revokedAt    DateTime?
 }
 
+/// @admin-proposal-block attendance-foundation
 enum AttendanceSource {
   LEGACY
   QR
   MANUAL
 }
 
+/// @admin-proposal-block attendance-qr
 enum AttendanceQrCredentialStatus {
   ACTIVE
   REPLACED
@@ -1130,6 +1146,42 @@ enum NotificationType {
   SOCIAL
   SYSTEM
   ACTIVITY
+}
+
+enum ScheduledNotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+model ScheduledNotification {
+  id      Int    @id @default(autoincrement())
+  title   String
+  message String
+
+  type   NotificationType            @default(SYSTEM)
+  status ScheduledNotificationStatus @default(PENDING)
+
+  sendAt  DateTime
+  sentAt  DateTime?
+  error   String?  @db.Text
+
+  /// Specific recipient. Null when sendToAll is true.
+  toUserId Int?
+  toUser   Member? @relation("ScheduledNotificationToUser", fields: [toUserId], references: [id])
+
+  sendToAll Boolean @default(false)
+
+  createdById Int?
+  updatedById Int?
+  createdBy   User? @relation("ScheduledNotificationCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User? @relation("ScheduledNotificationUpdatedBy", fields: [updatedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, sendAt])
 }
 
 model Conversation {
@@ -1276,6 +1328,86 @@ model Channel {
   participants       ChannelParticipant[]
   messages           ChannelMessage[]
   pendingAttachments ChannelMessageAttachment[]
+  agoraCalls         AgoraCall[]
+}
+
+enum AgoraCallType {
+  AUDIO
+  VIDEO
+}
+
+enum AgoraCallStatus {
+  RINGING
+  ACTIVE
+  ENDED
+  MISSED
+  REJECTED
+}
+
+enum AgoraCallMemberState {
+  CALLER
+  INVITED
+  JOINED
+  REJECTED
+  MISSED
+  LEFT
+}
+
+/// Voice/video call session (old: mail.agora.rtc)
+model AgoraCall {
+  id               Int             @id @default(autoincrement())
+  channelId        Int
+  channel          Channel         @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  callerId         Int
+  caller           Member          @relation("AgoraCallCaller", fields: [callerId], references: [id], onDelete: Cascade)
+  callType         AgoraCallType   @default(AUDIO)
+  status           AgoraCallStatus @default(RINGING)
+  agoraChannelName String
+  rtcToken         String?         @db.Text
+  rtmToken         String?         @db.Text
+  autoEndAt        DateTime
+  startedAt        DateTime?
+  endedAt          DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  members AgoraCallMember[]
+  hiddenBy AgoraCallHidden[]
+
+  @@index([channelId, status])
+  @@index([callerId])
+  @@index([autoEndAt, status])
+  @@index([createdAt])
+}
+
+model AgoraCallMember {
+  id        Int                  @id @default(autoincrement())
+  callId    Int
+  call      AgoraCall            @relation(fields: [callId], references: [id], onDelete: Cascade)
+  memberId  Int
+  member    Member               @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  state     AgoraCallMemberState @default(INVITED)
+  invitedAt DateTime             @default(now())
+  joinedAt  DateTime?
+  leftAt    DateTime?
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  @@unique([callId, memberId])
+  @@index([memberId])
+}
+
+/// Soft-hide call history for one member (other side still sees it)
+model AgoraCallHidden {
+  id        Int       @id @default(autoincrement())
+  callId    Int
+  call      AgoraCall @relation(fields: [callId], references: [id], onDelete: Cascade)
+  memberId  Int
+  member    Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+
+  @@unique([callId, memberId])
+  @@index([memberId])
 }
 
 model ChannelParticipant {

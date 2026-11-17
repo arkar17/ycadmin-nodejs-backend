@@ -12,13 +12,15 @@ The local `prisma/schema.prisma` now proposes:
 - `AttendanceQrCredential` with encrypted payload bytes, IV, AES-GCM authentication tag, HMAC fingerprint, status (`ACTIVE`, `REPLACED`, `REVOKED`), and User audit relations.
 - Corresponding explicit `User` relations for credential create/replace/revoke audit actors.
 
-The provisional forward-only migration sequence is:
+The provisional SQL sequence, now quarantined under
+`prisma/proposals/attendance/migrations/`, is:
 
 1. `20261031000000_add_shared_attendance_foundation` — adds sources, credentials, one-active partial unique index, rolling-window trigger, and local-only test-clock gate.
 2. `20261031000100_fix_attendance_trigger_audit_timestamp` — fixes direct SQL/shared writers by assigning required `updatedAt`.
 3. `20261031000200_fix_attendance_trigger_utc_storage` — fixes the inherited Prisma `timestamp without time zone` representation by storing UTC-naive values explicitly and converting from UTC before deriving the Yangon display date.
+4. `20261031000300_default_legacy_attendance_date` — adds the local compatibility default used while the proposal trigger owns the derived display date.
 
-All three were applied only through the explicitly localhost-only integration `DATABASE_URL`. They are intentionally not authoritative shared migrations. Before shared adoption, the mobile backend owner must re-author or squash the reviewed SQL into an authoritative migration after a clean migration review; do not copy these local migration folders blindly.
+They were validated only through the explicitly localhost-only integration `DATABASE_URL`. They are intentionally not authoritative shared migrations and have been moved out of Prisma's deployable migration directory. Before shared adoption, the mobile backend owner must re-author or squash the reviewed SQL into a new authoritative migration after a clean migration review; do not copy these proposal files into shared history.
 
 ### Rolling-window enforcement
 
