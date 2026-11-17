@@ -206,19 +206,49 @@ The shared permission catalog already defines `bank-information:list`, `bank-inf
 
 `docker-compose.integration.yml` defines the only database used by integration tests: PostgreSQL 16 at `127.0.0.1:55432`, database `yc_fitness_admin_integration`, with local-only synthetic credentials. It is not configured through `.env` and must never be pointed at a shared database.
 
-Bootstrap it in two explicit stages: apply migrations from the authoritative
-`ycfitness-api` checkout, then apply the quarantined Admin proposal SQL directly.
-Never substitute a shared database URL.
+### Lifecycle
 
 ```bash
-docker compose -f docker-compose.integration.yml up -d postgres-integration
-export ADMIN_INTEGRATION_DATABASE_URL='postgresql://yc_fitness_integration:yc_fitness_integration_local_only@127.0.0.1:55432/yc_fitness_admin_integration?schema=public'
-(cd ../ycfitness-api && DATABASE_URL="$ADMIN_INTEGRATION_DATABASE_URL" npx prisma migrate deploy --schema prisma/schema.prisma)
-for proposal in prisma/proposals/attendance/migrations/*.sql; do
-  psql "$ADMIN_INTEGRATION_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$proposal"
-done
-DATABASE_URL="$ADMIN_INTEGRATION_DATABASE_URL" npm run test:integration
+docker compose -f docker-compose.integration.yml up -d --wait postgres-integration
+npm run db:integration:bootstrap
+npm run test:integration
+docker compose -f docker-compose.integration.yml down -v
 ```
+
+`down -v` destroys the volume. **Every fresh volume must be bootstrapped again** before
+`npm run test:integration`; running tests against an un-bootstrapped database fails
+with Prisma errors such as ``The column `(not available)` does not exist``.
+Bootstrap refuses to run on a non-empty database, so to rebuild, run `down -v`,
+`up -d --wait`, then bootstrap again.
+
+### What `npm run db:integration:bootstrap` does
+
+1. **Safety guards before any connection.** Uses the shared guard in
+   `src/tests/integration-database-safety.ts`: only `yc_fitness_admin_integration` on
+   `localhost`/`127.0.0.1` port `55432` as `yc_fitness_integration`. It never reads
+   `DATABASE_URL` or `.env`. (`ADMIN_INTEGRATION_DATABASE_URL` may override the URL,
+   but it must still pass the same guard.)
+2. **Locates the authoritative Mobile API checkout** at `../ycfitness-api`, or at
+   `YC_FITNESS_API_PATH=/custom/path` (or `-- --authoritative /custom/path`). It fails
+   clearly if the checkout, `prisma/schema.prisma`, or a PostgreSQL
+   `migration_lock.toml` is missing. The checkout is only read. Its `node_modules` is
+   not required.
+3. **Uses this repository's pinned Prisma CLI** (`node_modules/prisma`, exact version from
+   `package.json`, installed by `npm ci`), never `npx prisma`. It fails if the installed
+   CLI differs from the pin or from the Mobile API lockfile's Prisma version.
+4. **Requires an empty database.**
+5. **A.** Runs `prisma migrate deploy` with a throwaway config pointing at the Mobile
+   API's `prisma/schema.prisma` and `prisma/migrations`, then checks that every
+   migration directory is recorded as applied.
+6. **B.** Applies only `prisma/proposals/attendance/migrations/*.sql`, in filename order,
+   each file in its own transaction, stopping on the first SQL error. This
+   repository's `prisma/migrations/` and `prisma/migrations-disabled/` are never
+   applied.
+7. **Verifies** with `prisma migrate diff --exit-code` that the database matches
+   `prisma/schema.prisma`, the source of the generated client.
+
+Never substitute a shared database URL, and never use these steps against a shared,
+staging, or production database.
 
 The integration setup replaces the normal application `DATABASE_URL` before Prisma is
 initialized. Its central safety guard accepts only the exact dedicated database name,
@@ -226,8 +256,8 @@ synthetic user, localhost host, and port `55432` before any fixture reset. Fixtu
 created in code with synthetic `example.test` identities; no reference or production
 records are imported.
 
-The System Admin concurrency verification can be run independently after applying the
-authoritative migrations:
+The System Admin concurrency verification can be run on its own once the database is
+bootstrapped:
 
 ```bash
 npm run test:integration -- src/modules/admin-rbac/rbac-mutation-concurrency.integration.test.ts

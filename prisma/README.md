@@ -54,7 +54,7 @@ file to hide the mismatch. Only the authoritative history may be deployed.
 
 The dedicated localhost integration database may be built using the authoritative
 repository's migration history, followed by the quarantined attendance proposal SQL,
-as documented in the root README. This local procedure does not grant authority to
+with `npm run db:integration:bootstrap` as documented in the root README. This local procedure does not grant authority to
 deploy the proposals elsewhere.
 
 ## Dependency versions
