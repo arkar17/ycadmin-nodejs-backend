@@ -1,5 +1,12 @@
 # Production Admin Authentication and Reverse-Proxy Design — Phase 3Q
 
+> Release update: `docs/browser-admin-authentication-v1.md` now documents the
+> implemented short-lived HttpOnly JWT-cookie transport. The opaque shared-store
+> session described below remains optional future hardening and is not current
+> behavior. Browser logout clears the cookie but does not centrally revoke a JWT.
+> Browser Auth v1 requires `Path=/`; the production proxy must therefore strip the
+> distinct Admin cookie before forwarding `/odoo-api` or any other non-Node upstream.
+
 ## Current verified state
 
 The Admin API login route issues an HS256 JWT with `{ id, loginType: 'admin' }`, an

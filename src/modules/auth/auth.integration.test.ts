@@ -10,9 +10,12 @@ import { PrismaMemberDirectoryRepository } from '../members/member-directory.rep
 import { PrismaAdminIdentityRepository } from './admin-identity.repository.js';
 import { PrismaAdminLoginRepository } from './admin-login.repository.js';
 import { createAuthRouter } from './auth.router.js';
+import { PrismaCurrentAdminRepository } from './current-admin.repository.js';
+import { createCurrentAdminRouter } from './current-admin.router.js';
 
 const password = 'integration-password';
-const app = () => { const value = express(); value.use(express.json()); value.use('/api/admin/v1/auth', createAuthRouter({ adminLoginRepository: new PrismaAdminLoginRepository() })); value.use('/api/admin/v1/members', createMemberDirectoryRouter({ adminIdentityRepository: new PrismaAdminIdentityRepository(), memberDirectoryRepository: new PrismaMemberDirectoryRepository() })); value.use(errorHandler); return value; };
+const browserAuth = { enabled: true, cookieName: 'yc_admin_session', secure: true, sameSite: 'lax' as const, maxAgeSeconds: 28_800, allowedOrigin: 'https://admin.example.test' };
+const app = () => { const value = express(); const identity = new PrismaAdminIdentityRepository(); value.use(express.json()); value.use('/api/admin/v1/auth', createAuthRouter({ adminLoginRepository: new PrismaAdminLoginRepository(), browserAuth })); value.use('/api/admin/v1/auth', createCurrentAdminRouter({ adminIdentityRepository: identity, currentAdminRepository: new PrismaCurrentAdminRepository(), browserAuth })); value.use('/api/admin/v1/members', createMemberDirectoryRouter({ adminIdentityRepository: identity, memberDirectoryRepository: new PrismaMemberDirectoryRepository() })); value.use(errorHandler); return value; };
 const isolated = () => { const url = new URL(process.env.DATABASE_URL ?? ''); if (!['127.0.0.1', 'localhost'].includes(url.hostname) || url.pathname !== '/yc_fitness_admin_integration') throw new Error('Integration tests may run only against the dedicated localhost integration database.'); };
 
 describe('Admin login isolated PostgreSQL integration', () => {
@@ -50,6 +53,29 @@ describe('Admin login isolated PostgreSQL integration', () => {
     await getPrismaClient().permission.update({ where: { id: rolePermission.permissionId }, data: { status: Status.INACTIVE } });
     const inactivePermission = await request(value).get('/api/admin/v1/members').set('Authorization', `Bearer ${login.body.data.accessToken}`);
     expect(inactivePermission.status).toBe(403);
+  });
+
+  it('sets a browser cookie and preserves immediate database-backed permission changes', async () => {
+    const value = app();
+    const login = await request(value)
+      .post('/api/admin/v1/auth/login')
+      .set('Origin', browserAuth.allowedOrigin)
+      .send({ emailOrUsername: 'login-admin', password });
+    const setCookie = login.headers['set-cookie'];
+    const cookieHeader = (Array.isArray(setCookie) ? setCookie[0] : setCookie)?.split(';', 1)[0];
+
+    expect(login.status).toBe(200);
+    expect(login.body.data.accessToken).toBeUndefined();
+    expect(cookieHeader).toEqual(expect.stringContaining(`${browserAuth.cookieName}=`));
+    const before = await request(value).get('/api/admin/v1/auth/me').set('Cookie', cookieHeader!);
+    expect(before.status).toBe(200);
+    expect(before.body.data.permissions).toEqual([expect.objectContaining({ name: 'member:list' })]);
+
+    const rolePermission = await getPrismaClient().rolePermission.findFirstOrThrow();
+    await getPrismaClient().rolePermission.delete({ where: { id: rolePermission.id } });
+    const after = await request(value).get('/api/admin/v1/auth/me').set('Cookie', cookieHeader!);
+    expect(after.status).toBe(200);
+    expect(after.body.data.permissions).toEqual([]);
   });
 
   it('revokes authentication on the next request when the User, Role, or assignment is deactivated or removed', async () => {

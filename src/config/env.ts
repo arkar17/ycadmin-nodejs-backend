@@ -8,12 +8,31 @@ const optionalSecret = z.preprocess(
   z.string().min(1).optional(),
 );
 
+const booleanString = (defaultValue: 'true' | 'false') => z.preprocess(
+  (value) => value === '' ? undefined : value,
+  z.enum(['true', 'false']).default(defaultValue),
+).transform((value) => value === 'true');
+
+const optionalOrigin = z.preprocess(
+  (value) => value === '' ? undefined : value,
+  z.string().url().refine((value) => new URL(value).origin === value, 'must be an exact origin without a path, query, or fragment').optional(),
+);
+
 const environmentSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters.'),
   JWT_EXPIRES_IN: z.string().regex(/^\d+[smhd]$/, 'JWT_EXPIRES_IN must be a positive duration such as 15m, 1h, or 30d.').default('30d'),
+  ADMIN_BROWSER_AUTH_ENABLED: booleanString('false'),
+  ADMIN_AUTH_COOKIE_NAME: z.string().regex(/^[A-Za-z0-9_-]+$/, 'ADMIN_AUTH_COOKIE_NAME contains invalid characters.').default('yc_admin_session'),
+  ADMIN_AUTH_COOKIE_SECURE: booleanString('true'),
+  ADMIN_AUTH_COOKIE_SAME_SITE: z.enum(['lax', 'strict']).default('lax'),
+  ADMIN_AUTH_COOKIE_MAX_AGE_SECONDS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.coerce.number().int().min(900).max(43_200).default(28_800),
+  ),
+  ADMIN_AUTH_ALLOWED_ORIGIN: optionalOrigin,
   DATABASE_URL: z.string().url().optional(),
   // These are deliberately optional so health checks and APIs unrelated to QR
   // management can start without decryption capability. The QR route fails
@@ -61,6 +80,16 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.coerce.number().int().min(100).max(15_000).default(5000),
   ),
+}).superRefine((value, context) => {
+  if (!value.ADMIN_BROWSER_AUTH_ENABLED) return;
+  if (!value.ADMIN_AUTH_ALLOWED_ORIGIN) {
+    context.addIssue({ code: 'custom', path: ['ADMIN_AUTH_ALLOWED_ORIGIN'], message: 'is required when browser authentication is enabled.' });
+  } else if (value.NODE_ENV !== 'development' && !value.ADMIN_AUTH_ALLOWED_ORIGIN.startsWith('https://')) {
+    context.addIssue({ code: 'custom', path: ['ADMIN_AUTH_ALLOWED_ORIGIN'], message: 'must use HTTPS outside local development.' });
+  }
+  if (value.NODE_ENV !== 'development' && !value.ADMIN_AUTH_COOKIE_SECURE) {
+    context.addIssue({ code: 'custom', path: ['ADMIN_AUTH_COOKIE_SECURE'], message: 'must be true outside local development.' });
+  }
 });
 
 const parsedEnvironment = environmentSchema.safeParse(process.env);

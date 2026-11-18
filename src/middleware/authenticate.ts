@@ -1,28 +1,58 @@
 import type { RequestHandler } from 'express';
 import jwt from 'jsonwebtoken';
 
+import { adminBrowserAuthConfig, type AdminBrowserAuthConfig } from '../config/admin-browser-auth.js';
 import { env } from '../config/env.js';
 import {
   PrismaAdminIdentityRepository,
   type AdminIdentityRepository,
 } from '../modules/auth/admin-identity.repository.js';
 import { hasSystemAdminRole } from '../modules/auth/admin-access-policy.js';
+import { isUnsafeMethod, readBrowserAuthCookie, requireAllowedBrowserOrigin } from '../modules/auth/browser-auth.js';
 import { AppError } from '../shared/app-error.js';
 
 export type SharedAdminTokenClaims = jwt.JwtPayload & { id: number; loginType: 'admin' };
 
 const defaultAdminIdentityRepository = new PrismaAdminIdentityRepository();
 
-export const createAuthenticateAdmin = (repository: AdminIdentityRepository): RequestHandler => async (
+export const createAuthenticateAdmin = (
+  repository: AdminIdentityRepository,
+  browserAuth: AdminBrowserAuthConfig = adminBrowserAuthConfig,
+): RequestHandler => async (
   request,
   _response,
   next,
 ) => {
   const authorization = request.header('authorization');
-  const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
+  let token: string | undefined;
+  let transport: 'bearer' | 'browser-cookie' | undefined;
+
+  if (authorization !== undefined) {
+    const match = /^Bearer (.+)$/i.exec(authorization);
+    if (!match || !match[1]) {
+      return next(new AppError({ statusCode: 401, code: 'INVALID_TOKEN', message: 'Authentication token is invalid or expired.' }));
+    }
+    token = match[1];
+    transport = 'bearer';
+  } else if (browserAuth.enabled) {
+    try {
+      token = readBrowserAuthCookie(request, browserAuth.cookieName);
+    } catch (error) {
+      return next(error);
+    }
+    if (token) transport = 'browser-cookie';
+  }
 
   if (!token) {
     return next(new AppError({ statusCode: 401, code: 'UNAUTHENTICATED', message: 'Authentication is required.' }));
+  }
+
+  if (transport === 'browser-cookie' && isUnsafeMethod(request.method)) {
+    try {
+      requireAllowedBrowserOrigin(request, browserAuth);
+    } catch (error) {
+      return next(error);
+    }
   }
 
   let decoded: string | jwt.JwtPayload;
@@ -60,6 +90,7 @@ export const createAuthenticateAdmin = (repository: AdminIdentityRepository): Re
     roles: identity.roleNames,
     permissions: identity.permissionNames,
     isSystemAdmin: hasSystemAdminRole(identity.roleNames),
+    transport: transport!,
   };
   return next();
 };

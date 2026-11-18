@@ -20,6 +20,12 @@ issued/expiry claims. Roles, permissions, status, and System Admin state are nev
 trusted from a token. Every protected request reloads the active User, active Roles,
 and active Permissions from PostgreSQL.
 
+The same JWT may arrive through an explicit Bearer header or, when browser auth is
+enabled, the configured same-origin HttpOnly Admin cookie. An explicit Authorization
+header takes precedence and never falls back to the cookie when invalid. Cookie-
+authenticated unsafe requests additionally require the configured exact Origin or a
+same-origin Referer fallback. See `browser-admin-authentication-v1.md`.
+
 Issuer/audience claims remain a documented future hardening step because adding them
 now would intentionally reject currently compatible tokens and clients.
 

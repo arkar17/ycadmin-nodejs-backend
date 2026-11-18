@@ -12,6 +12,7 @@ declare global {
         roles: string[];
         permissions: string[];
         isSystemAdmin: boolean;
+        transport: 'bearer' | 'browser-cookie';
       };
     }
   }

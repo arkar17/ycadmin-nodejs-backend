@@ -18,7 +18,10 @@ const invalidCredentials = () => new AppError({ statusCode: 401, code: 'INVALID_
 export class AdminLoginService {
   public constructor(private readonly repository: AdminLoginRepository) {}
 
-  public async login(input: AdminLoginInput): Promise<AdminLoginResult> {
+  public async login(
+    input: AdminLoginInput,
+    expiresIn: jwt.SignOptions['expiresIn'] = env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'],
+  ): Promise<AdminLoginResult> {
     const account = await this.repository.findActiveByEmailOrUsername(input.emailOrUsername);
     // bcrypt's compare is deliberately still performed for an unknown/inactive
     // account to reduce account-existence timing differences.
@@ -29,7 +32,7 @@ export class AdminLoginService {
     const accessToken = jwt.sign(
       { id: account.id, loginType: 'admin' },
       env.JWT_SECRET,
-      { algorithm: 'HS256', expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'] },
+      { algorithm: 'HS256', expiresIn },
     );
     const decoded = jwt.decode(accessToken);
     if (typeof decoded === 'string' || !decoded?.exp) throw new Error('JWT signing did not produce an expiration claim.');
