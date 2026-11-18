@@ -74,13 +74,17 @@ const stateConflict = (status: PaymentStatus) => new AppError({
   message: 'Payment has already received the opposite terminal decision.',
   details: { status },
 });
+const managedByRequest = () => new AppError({
+  statusCode: 409,
+  code: 'PAYMENT_MANAGED_BY_REQUEST',
+  message: 'This payment must be decided through its owning request.',
+});
 
 const relationshipIssues = (payment: SelectedPayment): string[] => {
   if (payment.requestType === PaymentRequestType.MEMBER_PLAN_UPGRADE) {
     return [
       ...(payment.memberPlanId === null ? ['memberPlanId is required'] : []),
       ...(payment.memberTypeId === null ? ['memberTypeId is required'] : []),
-      ...(payment.memberRequestId === null ? ['memberRequestId is required'] : []),
       ...(payment.shopLevelId !== null ? ['shopLevelId must be null'] : []),
       ...(payment.shopUpgradeRequestId !== null ? ['shopUpgradeRequestId must be null'] : []),
       ...(payment.memberRequest && payment.memberRequest.memberId !== payment.memberId ? ['MemberRequest belongs to another Member'] : []),
@@ -91,7 +95,6 @@ const relationshipIssues = (payment: SelectedPayment): string[] => {
 
   return [
     ...(payment.shopLevelId === null ? ['shopLevelId is required'] : []),
-    ...(payment.shopUpgradeRequestId === null ? ['shopUpgradeRequestId is required'] : []),
     ...(payment.memberPlanId !== null ? ['memberPlanId must be null'] : []),
     ...(payment.memberTypeId !== null ? ['memberTypeId must be null'] : []),
     ...(payment.memberRequestId !== null ? ['memberRequestId must be null'] : []),
@@ -164,6 +167,7 @@ export class PrismaPaymentRepository implements PaymentRepository {
       : 'Your payment has been declined.';
     const current = await transaction.payment.findUnique({ where: { id: input.paymentId }, select: paymentSelect });
     if (!current) throw notFound();
+    if (current.memberRequestId !== null || current.shopUpgradeRequestId !== null) throw managedByRequest();
     if (current.status === desiredStatus) return { changed: false, payment: toRecord(current), pushTarget: null };
     if (current.status !== PaymentStatus.DRAFT) throw stateConflict(current.status);
     assertDecisionRelationships(current);

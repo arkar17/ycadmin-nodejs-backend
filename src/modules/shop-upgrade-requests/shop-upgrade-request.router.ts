@@ -1,0 +1,23 @@
+import { Router } from 'express';
+import { env } from '../../config/env.js';
+import { paymentProofConfigFromEnvironment } from '../../config/payment-proof.js';
+import { createAuthenticateAdmin } from '../../middleware/authenticate.js';
+import { requirePermission } from '../../middleware/authorize.js';
+import { validate } from '../../middleware/validate.js';
+import type { AdminIdentityRepository } from '../auth/admin-identity.repository.js';
+import { HttpPaymentProofFetcher } from '../payment-proof/payment-proof.fetcher.js';
+import { SharpPaymentProofImageNormalizer } from '../payment-proof/payment-proof.image.js';
+import { ShopUpgradePaymentProofService } from './shop-upgrade-payment-proof.service.js';
+import { ShopUpgradeRequestController } from './shop-upgrade-request.controller.js';
+import type { ShopUpgradeRequestRepository } from './shop-upgrade-request.repository.js';
+import { shopUpgradeRequestApproveRequestSchema, shopUpgradeRequestDetailRequestSchema, shopUpgradeRequestListRequestSchema, shopUpgradeRequestProofRequestSchema, shopUpgradeRequestRejectRequestSchema } from './shop-upgrade-request.schema.js';
+import { ShopUpgradeRequestService } from './shop-upgrade-request.service.js';
+export const createShopUpgradeRequestRouter = (dependencies: { adminIdentityRepository: AdminIdentityRepository; shopUpgradeRequestRepository: ShopUpgradeRequestRepository; paymentProofService?: ShopUpgradePaymentProofService }): Router => {
+  const router = Router(); const config = paymentProofConfigFromEnvironment(env); const proof = dependencies.paymentProofService ?? new ShopUpgradePaymentProofService(dependencies.shopUpgradeRequestRepository, config, new HttpPaymentProofFetcher(config), new SharpPaymentProofImageNormalizer(config)); const controller = new ShopUpgradeRequestController(new ShopUpgradeRequestService(dependencies.shopUpgradeRequestRepository, proof)); const authenticate = createAuthenticateAdmin(dependencies.adminIdentityRepository);
+  router.get('/', authenticate, requirePermission('shop-level-request:list'), validate(shopUpgradeRequestListRequestSchema), controller.list);
+  router.get('/:requestId/payments/:paymentId/proof', authenticate, requirePermission('shop-level-request:read'), validate(shopUpgradeRequestProofRequestSchema), controller.proof);
+  router.get('/:id', authenticate, requirePermission('shop-level-request:read'), validate(shopUpgradeRequestDetailRequestSchema), controller.detail);
+  router.post('/:id/approve', authenticate, requirePermission('shop-level-request:update'), validate(shopUpgradeRequestApproveRequestSchema), controller.approve);
+  router.post('/:id/reject', authenticate, requirePermission('shop-level-request:update'), validate(shopUpgradeRequestRejectRequestSchema), controller.reject);
+  return router;
+};

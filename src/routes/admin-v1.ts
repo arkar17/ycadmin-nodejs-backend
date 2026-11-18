@@ -41,6 +41,10 @@ import { createPaymentRouter } from '../modules/payments/payment.router.js';
 import { createPaymentPushNotificationService } from '../modules/payments/payment-push.factory.js';
 import { PrismaShopPlanLevelRepository } from '../modules/shop-plan-levels/shop-plan-level.repository.js';
 import { createShopPlanLevelRouter } from '../modules/shop-plan-levels/shop-plan-level.router.js';
+import { PrismaShopRepository } from '../modules/shops/shop.repository.js';
+import { createShopRouter } from '../modules/shops/shop.router.js';
+import { PrismaShopUpgradeRequestRepository } from '../modules/shop-upgrade-requests/shop-upgrade-request.repository.js';
+import { createShopUpgradeRequestRouter } from '../modules/shop-upgrade-requests/shop-upgrade-request.router.js';
 import { PrismaWorkoutRepository } from '../modules/workouts/workout.repository.js';
 import { createWorkoutRouter } from '../modules/workouts/workout.router.js';
 
@@ -187,6 +191,22 @@ adminV1Router.use(
   createShopPlanLevelRouter({
     adminIdentityRepository: new PrismaAdminIdentityRepository(),
     shopPlanLevelRepository: new PrismaShopPlanLevelRepository(),
+  }),
+);
+
+adminV1Router.use(
+  '/shops',
+  createShopRouter({
+    adminIdentityRepository: new PrismaAdminIdentityRepository(),
+    shopRepository: new PrismaShopRepository(),
+  }),
+);
+
+adminV1Router.use(
+  '/shop-upgrade-requests',
+  createShopUpgradeRequestRouter({
+    adminIdentityRepository: new PrismaAdminIdentityRepository(),
+    shopUpgradeRequestRepository: new PrismaShopUpgradeRequestRepository(),
   }),
 );
 

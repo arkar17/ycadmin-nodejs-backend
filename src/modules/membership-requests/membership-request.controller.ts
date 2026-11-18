@@ -3,6 +3,7 @@ import { sendCollection, sendData } from '../../shared/api-response.js';
 import type { MembershipRequestListQuery } from './membership-request.schema.js';
 import type { MembershipRequestApproveInput, MembershipRequestRejectInput } from './membership-request.schema.js';
 import type { MembershipRequestService } from './membership-request.service.js';
+import { sendPaymentProof } from '../payment-proof/payment-proof.response.js';
 
 export class MembershipRequestController {
   public constructor(private readonly service: MembershipRequestService) {}
@@ -11,15 +12,7 @@ export class MembershipRequestController {
   public readonly proof = async (request: Request, response: Response) => {
     const { requestId, paymentId } = request.validated?.params as { requestId: number; paymentId: number };
     const proof = await this.service.proof(requestId, paymentId);
-    return response.status(200).set({
-      'Content-Type': 'image/webp',
-      'Content-Length': String(proof.length),
-      'Content-Disposition': 'inline; filename="payment-proof.webp"',
-      'X-Content-Type-Options': 'nosniff',
-      'Cache-Control': 'private, no-store, max-age=0',
-      Pragma: 'no-cache',
-      'Content-Security-Policy': "sandbox; default-src 'none'",
-    }).send(proof);
+    return sendPaymentProof(response, proof);
   };
   public readonly approve = async (request: Request, response: Response) => {
     const { id } = request.validated?.params as { id: number };

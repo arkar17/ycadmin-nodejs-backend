@@ -30,6 +30,7 @@ type Fixture = {
   shopId: number;
   shopUpgradeRequestId: number;
   shopPaymentId: number;
+  standalonePaymentId: number;
   invalidPaymentId: number;
   originalMemberTypeId: number;
   originalShopLevelId: number;
@@ -113,7 +114,7 @@ const reset = async (): Promise<Fixture> => {
     bankAccountNumber: '1234567890123456',
     phone: '09123456789',
   } });
-  const [memberPayment, shopPayment, invalidPayment] = await Promise.all([
+  const [memberPayment, shopPayment, standalonePayment, invalidPayment] = await Promise.all([
     prisma.payment.create({ data: {
       name: 'YC/26/000001',
       memberId: member.id,
@@ -147,6 +148,17 @@ const reset = async (): Promise<Fixture> => {
       memberId: member.id,
       requestType: PaymentRequestType.MEMBER_PLAN_UPGRADE,
       memberPlanId: plan.id,
+      memberTypeId: gymType.id,
+      bankInformationId: bank.id,
+      amount: 30_000,
+      attachment: 'private/standalone-proof-key',
+      status: PaymentStatus.DRAFT,
+    } }),
+    prisma.payment.create({ data: {
+      name: 'YC/26/000004',
+      memberId: member.id,
+      requestType: PaymentRequestType.MEMBER_PLAN_UPGRADE,
+      memberPlanId: null,
       memberTypeId: trainerType.id,
       bankInformationId: bank.id,
       amount: 1,
@@ -166,6 +178,7 @@ const reset = async (): Promise<Fixture> => {
     shopId: shop.id,
     shopUpgradeRequestId: shopRequest.id,
     shopPaymentId: shopPayment.id,
+    standalonePaymentId: standalonePayment.id,
     invalidPaymentId: invalidPayment.id,
     originalMemberTypeId: gymType.id,
     originalShopLevelId: currentShopLevel.id,
@@ -195,8 +208,8 @@ describe('Payment management on isolated PostgreSQL', () => {
       .set('Authorization', authorization);
     const detail = await request(value).get(`/api/admin/v1/payments/${fixture.memberPaymentId}`).set('Authorization', authorization);
     expect(list.status).toBe(200);
-    expect(list.body.data).toHaveLength(1);
-    expect(list.body.data[0]).toMatchObject({ id: fixture.memberPaymentId, status: 'DRAFT', hasPaymentProof: true });
+    expect(list.body.data).toHaveLength(2);
+    expect(list.body.data).toEqual(expect.arrayContaining([expect.objectContaining({ id: fixture.memberPaymentId, status: 'DRAFT', hasPaymentProof: true })]));
     expect(detail.body.data).toMatchObject({
       id: fixture.memberPaymentId,
       memberRequest: { id: fixture.memberRequestId, status: 'PENDING' },
@@ -205,18 +218,33 @@ describe('Payment management on isolated PostgreSQL', () => {
     expect(JSON.stringify([list.body, detail.body])).not.toMatch(/private\/|attachment|1234567890123456|Sensitive Holder|09123456789/);
   });
 
+  it('blocks request-managed payments while leaving reads intact and allowing an unrelated payment', async () => {
+    const value = app(); const authorization = `Bearer ${token(fixture.firstAdminId)}`;
+    const [memberManaged, shopManaged, standalone] = await Promise.all([
+      request(value).post(`/api/admin/v1/payments/${fixture.memberPaymentId}/accept`).set('Authorization', authorization).send({}),
+      request(value).post(`/api/admin/v1/payments/${fixture.shopPaymentId}/decline`).set('Authorization', authorization).send({ reason: 'No' }),
+      request(value).post(`/api/admin/v1/payments/${fixture.standalonePaymentId}/accept`).set('Authorization', authorization).send({}),
+    ]);
+    expect([memberManaged.status, shopManaged.status, standalone.status]).toEqual([409, 409, 200]);
+    expect(memberManaged.body.error.code).toBe('PAYMENT_MANAGED_BY_REQUEST');
+    expect(shopManaged.body.error.code).toBe('PAYMENT_MANAGED_BY_REQUEST');
+    const prisma = getPrismaClient();
+    expect((await prisma.payment.findUniqueOrThrow({ where: { id: fixture.memberPaymentId } })).status).toBe(PaymentStatus.DRAFT);
+    expect((await prisma.payment.findUniqueOrThrow({ where: { id: fixture.shopPaymentId } })).status).toBe(PaymentStatus.DRAFT);
+  });
+
   it('atomically accepts a Payment and Notification while leaving membership data unchanged', async () => {
     const push = { send: vi.fn(async () => { throw new Error('synthetic FCM failure'); }) };
     const response = await request(app(push))
-      .post(`/api/admin/v1/payments/${fixture.memberPaymentId}/accept`)
+      .post(`/api/admin/v1/payments/${fixture.standalonePaymentId}/accept`)
       .set('Authorization', `Bearer ${token(fixture.firstAdminId)}`)
       .send({});
     expect(response.status).toBe(200);
     expect(response.body.data).toMatchObject({ changed: true, payment: { status: 'ACCEPT' } });
     const prisma = getPrismaClient();
     const [payment, notification, member, memberRequest] = await Promise.all([
-      prisma.payment.findUniqueOrThrow({ where: { id: fixture.memberPaymentId } }),
-      prisma.notification.findFirstOrThrow({ where: { resId: fixture.memberPaymentId, model: 'system' } }),
+      prisma.payment.findUniqueOrThrow({ where: { id: fixture.standalonePaymentId } }),
+      prisma.notification.findFirstOrThrow({ where: { resId: fixture.standalonePaymentId, model: 'system' } }),
       prisma.member.findUniqueOrThrow({ where: { id: fixture.memberId } }),
       prisma.memberRequest.findUniqueOrThrow({ where: { id: fixture.memberRequestId } }),
     ]);
@@ -230,7 +258,7 @@ describe('Payment management on isolated PostgreSQL', () => {
     expect(payment.approvedAt).toBeInstanceOf(Date);
     expect(notification).toMatchObject({
       toUserId: fixture.memberId,
-      resId: fixture.memberPaymentId,
+      resId: fixture.standalonePaymentId,
       type: 'SYSTEM',
       isSeen: false,
       isRead: false,
@@ -241,16 +269,16 @@ describe('Payment management on isolated PostgreSQL', () => {
     expect(push.send).toHaveBeenCalledOnce();
 
     const repeated = await request(app())
-      .post(`/api/admin/v1/payments/${fixture.memberPaymentId}/accept`)
+      .post(`/api/admin/v1/payments/${fixture.standalonePaymentId}/accept`)
       .set('Authorization', `Bearer ${token(fixture.firstAdminId)}`)
       .send({});
     const opposite = await request(app())
-      .post(`/api/admin/v1/payments/${fixture.memberPaymentId}/decline`)
+      .post(`/api/admin/v1/payments/${fixture.standalonePaymentId}/decline`)
       .set('Authorization', `Bearer ${token(fixture.firstAdminId)}`)
       .send({ reason: 'Too late' });
     expect(repeated.body.data.changed).toBe(false);
     expect(opposite.status).toBe(409);
-    expect(await prisma.notification.count({ where: { resId: fixture.memberPaymentId } })).toBe(1);
+    expect(await prisma.notification.count({ where: { resId: fixture.standalonePaymentId } })).toBe(1);
   });
 
   it('keeps Payment and Notification committed when the FCM adapter fails (fake sender, no Firebase)', async () => {
@@ -261,7 +289,7 @@ describe('Payment management on isolated PostgreSQL', () => {
     };
     const push = new FcmPaymentPushNotificationService(sender, { timeoutMs: 5000 }, { info: vi.fn() });
     const response = await request(app(push))
-      .post(`/api/admin/v1/payments/${fixture.memberPaymentId}/accept`)
+      .post(`/api/admin/v1/payments/${fixture.standalonePaymentId}/accept`)
       .set('Authorization', `Bearer ${token(fixture.firstAdminId)}`)
       .send({});
     expect(response.status).toBe(200);
@@ -273,8 +301,8 @@ describe('Payment management on isolated PostgreSQL', () => {
     });
     const prisma = getPrismaClient();
     const [payment, notifications] = await Promise.all([
-      prisma.payment.findUniqueOrThrow({ where: { id: fixture.memberPaymentId }, select: { status: true } }),
-      prisma.notification.findMany({ where: { resId: fixture.memberPaymentId } }),
+      prisma.payment.findUniqueOrThrow({ where: { id: fixture.standalonePaymentId }, select: { status: true } }),
+      prisma.notification.findMany({ where: { resId: fixture.standalonePaymentId } }),
     ]);
     expect(payment.status).toBe(PaymentStatus.ACCEPT);
     expect(notifications).toHaveLength(1);
@@ -290,14 +318,14 @@ describe('Payment management on isolated PostgreSQL', () => {
 
   it('declines with trimmed reason and leaves Shop/ShopUpgradeRequest unchanged', async () => {
     const response = await request(app())
-      .post(`/api/admin/v1/payments/${fixture.shopPaymentId}/decline`)
+      .post(`/api/admin/v1/payments/${fixture.standalonePaymentId}/decline`)
       .set('Authorization', `Bearer ${token(fixture.firstAdminId)}`)
       .send({ reason: '  Proof cannot be verified  ' });
     expect(response.status).toBe(200);
     const prisma = getPrismaClient();
     const [payment, notification, shop, shopRequest] = await Promise.all([
-      prisma.payment.findUniqueOrThrow({ where: { id: fixture.shopPaymentId } }),
-      prisma.notification.findFirstOrThrow({ where: { resId: fixture.shopPaymentId } }),
+      prisma.payment.findUniqueOrThrow({ where: { id: fixture.standalonePaymentId } }),
+      prisma.notification.findFirstOrThrow({ where: { resId: fixture.standalonePaymentId } }),
       prisma.shop.findUniqueOrThrow({ where: { id: fixture.shopId } }),
       prisma.shopUpgradeRequest.findUniqueOrThrow({ where: { id: fixture.shopUpgradeRequestId } }),
     ]);
@@ -313,16 +341,16 @@ describe('Payment management on isolated PostgreSQL', () => {
     expect(shopRequest.status).toBe(MemberRequestStatus.PENDING);
 
     const repeated = await request(app())
-      .post(`/api/admin/v1/payments/${fixture.shopPaymentId}/decline`)
+      .post(`/api/admin/v1/payments/${fixture.standalonePaymentId}/decline`)
       .set('Authorization', `Bearer ${token(fixture.firstAdminId)}`)
       .send({ reason: 'A different retry reason is ignored' });
     const opposite = await request(app())
-      .post(`/api/admin/v1/payments/${fixture.shopPaymentId}/accept`)
+      .post(`/api/admin/v1/payments/${fixture.standalonePaymentId}/accept`)
       .set('Authorization', `Bearer ${token(fixture.firstAdminId)}`)
       .send({});
     expect(repeated.body.data.changed).toBe(false);
     expect(opposite.status).toBe(409);
-    expect(await prisma.notification.count({ where: { resId: fixture.shopPaymentId } })).toBe(1);
+    expect(await prisma.notification.count({ where: { resId: fixture.standalonePaymentId } })).toBe(1);
   });
 
   it('rolls back the Payment decision when Notification insertion fails', async () => {
@@ -339,12 +367,12 @@ describe('Payment management on isolated PostgreSQL', () => {
       FOR EACH ROW EXECUTE FUNCTION fail_payment_notification()
     `);
     const response = await request(app())
-      .post(`/api/admin/v1/payments/${fixture.memberPaymentId}/accept`)
+      .post(`/api/admin/v1/payments/${fixture.standalonePaymentId}/accept`)
       .set('Authorization', `Bearer ${token(fixture.firstAdminId)}`)
       .send({});
     expect(response.status).toBe(500);
-    expect(await prisma.payment.findUniqueOrThrow({ where: { id: fixture.memberPaymentId }, select: { status: true } })).toEqual({ status: PaymentStatus.DRAFT });
-    expect(await prisma.notification.count({ where: { resId: fixture.memberPaymentId } })).toBe(0);
+    expect(await prisma.payment.findUniqueOrThrow({ where: { id: fixture.standalonePaymentId }, select: { status: true } })).toEqual({ status: PaymentStatus.DRAFT });
+    expect(await prisma.notification.count({ where: { resId: fixture.standalonePaymentId } })).toBe(0);
   });
 
   it('allows only one conflicting concurrent terminal decision to win', async () => {
@@ -363,13 +391,13 @@ describe('Payment management on isolated PostgreSQL', () => {
     `);
     const value = app();
     const [accept, decline] = await Promise.all([
-      request(value).post(`/api/admin/v1/payments/${fixture.memberPaymentId}/accept`).set('Authorization', `Bearer ${token(fixture.firstAdminId)}`).send({}),
-      request(value).post(`/api/admin/v1/payments/${fixture.memberPaymentId}/decline`).set('Authorization', `Bearer ${token(fixture.secondAdminId)}`).send({ reason: 'Concurrent decline' }),
+      request(value).post(`/api/admin/v1/payments/${fixture.standalonePaymentId}/accept`).set('Authorization', `Bearer ${token(fixture.firstAdminId)}`).send({}),
+      request(value).post(`/api/admin/v1/payments/${fixture.standalonePaymentId}/decline`).set('Authorization', `Bearer ${token(fixture.secondAdminId)}`).send({ reason: 'Concurrent decline' }),
     ]);
     expect([accept.status, decline.status].sort()).toEqual([200, 409]);
-    const stored = await prisma.payment.findUniqueOrThrow({ where: { id: fixture.memberPaymentId } });
+    const stored = await prisma.payment.findUniqueOrThrow({ where: { id: fixture.standalonePaymentId } });
     expect([PaymentStatus.ACCEPT, PaymentStatus.DECLINE]).toContain(stored.status);
-    expect(await prisma.notification.count({ where: { resId: fixture.memberPaymentId } })).toBe(1);
+    expect(await prisma.notification.count({ where: { resId: fixture.standalonePaymentId } })).toBe(1);
   });
 
   it('rejects structurally invalid history and honors permission revocation on the next request', async () => {
@@ -379,8 +407,8 @@ describe('Payment management on isolated PostgreSQL', () => {
     expect(invalid.status).toBe(409);
     expect(invalid.body.error.code).toBe('PAYMENT_RELATIONSHIP_INVALID');
     await getPrismaClient().rolePermission.deleteMany({ where: { roleId: fixture.roleId, permissionId: fixture.updatePermissionId } });
-    const revoked = await request(value).post(`/api/admin/v1/payments/${fixture.memberPaymentId}/accept`).set('Authorization', authorization).send({});
+    const revoked = await request(value).post(`/api/admin/v1/payments/${fixture.standalonePaymentId}/accept`).set('Authorization', authorization).send({});
     expect(revoked.status).toBe(403);
-    expect(await getPrismaClient().payment.findUniqueOrThrow({ where: { id: fixture.memberPaymentId }, select: { status: true } })).toEqual({ status: PaymentStatus.DRAFT });
+    expect(await getPrismaClient().payment.findUniqueOrThrow({ where: { id: fixture.standalonePaymentId }, select: { status: true } })).toEqual({ status: PaymentStatus.DRAFT });
   });
 });
