@@ -36,7 +36,7 @@ owner approval before any shared-environment route can authorize it.
 | Member Types | `member-type:list` | Present | None. `:read/create/update/delete` are cataloged but unused by this Admin API. |
 | Bank Information | `bank-information:list`, `:read`, `:create`, `:update`, `:delete` | Present | None. |
 | Feedback | `feedback:list`, `feedback:read` | **Proposed / absent** | Add two definitions after approval. |
-| Membership Requests | `member-request:list`, `:read` | Present | None. `member-request:update` exists but has no Admin decision route because approval/rejection is blocked. |
+| Membership Requests | `member-request:list`, `:read`, `:update` | Present | `:update` protects the transactional approve/reject decision routes. |
 | Attendance | `attendance:list`, `attendance:create` | Present | None. `:read/update/delete` are cataloged but unused. |
 | Permanent QR | `attendance-qr:read`, `attendance-qr:create` | **Proposed / absent** | Add two definitions after approval. |
 | Workout Videos | `workout:list`, `:read`, `:update` | Present | None. `:create/delete` are cataloged but their routes are deferred. |

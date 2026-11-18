@@ -132,11 +132,17 @@ without a replacement JWT.
 
 The verified schema has no current Member-to-Plan relation. `memberPlanId` and the legacy `member_plan_id` are therefore rejected with a validation error, and each safe DTO reports `memberPlan: null`. The endpoint does not expose `attendanceSubjectId`, profile image URLs/storage keys, passwords, provider tokens, or raw media fields.
 
-## Membership Requests (read-only)
+## Membership Requests
 
 `GET /api/admin/v1/membership-requests` and `GET /api/admin/v1/membership-requests/:id` are enabled. List filters are `memberName`/`member_name`, `memberPlanId`/`member_plan_id`, canonical `status` (`PENDING`, `APPROVED`, `REJECTED`), `date`, `limit` (1–100), and `offset`. The date filter uses Asia/Yangon calendar-day boundaries converted to UTC instants.
 
-List and detail require `member-request:list` and `member-request:read`, respectively. Payment proof data is limited to a boolean availability indicator; attachment keys and URLs are never exposed. Legacy Odoo `draft` and `paid` values are rejected rather than being silently mapped. Approval/rejection remains deliberately unimplemented pending an owner-approved transactional lifecycle. See `docs/shared-backend-reference/membership-request-compatibility.md`.
+List and detail require `member-request:list` and `member-request:read`, respectively. Detail payment summaries include status, amount, request date, `hasPaymentProof`, `paymentProofStatus`, an authenticated proof path only for the exact supported current format, a non-credential destination summary, and a structural-match flag. Attachment values, object-storage URLs/keys, and bank credentials are never exposed.
+
+`GET /api/admin/v1/membership-requests/:requestId/payments/:paymentId/proof` is disabled by default and requires `member-request:read`. When explicitly enabled, it first validates the request/payment/member/plan/type relationship, accepts only the exact approved DigitalOcean Spaces URL format, derives a trusted origin and key without fetching the stored URL, rejects redirects and compressed responses, enforces timeout/byte/pixel limits, validates the image, strips metadata, and returns normalized WebP with private no-store headers. Legacy Mobile-local URLs and all other attachment formats remain unsupported.
+
+`POST /api/admin/v1/membership-requests/:id/approve` and `/reject` require `member-request:update` and an explicit positive integer `paymentId`; rejection additionally requires a trimmed non-empty reason. Both decisions run in a retryable serializable transaction and couple the request, selected payment, Member, applicable trainer-shaped MemberProfile data, and exactly one SYSTEM notification. Terminal requests cannot be reopened. Same-payment repeats are idempotent only when the payment is already in the corresponding terminal state.
+
+Approval updates `Member.memberTypeId` from the request, never from a numeric constant. The schema has no immutable Gym/Trainer semantic key, so trainer-only profile updates use the complete trainer-request field shape required by the Mobile contract rather than mutable type names or IDs. The schema also has no per-Member plan entitlement/history, effective date, expiry, renewal, or immutable price snapshot; none is invented by this flow. See `docs/shared-backend-reference/member-request-approval-contract.md`.
 
 ## Payment management
 

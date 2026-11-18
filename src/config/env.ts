@@ -42,6 +42,25 @@ const environmentSchema = z.object({
       .max(15000, 'PAYMENT_PUSH_TIMEOUT_MS must be an integer between 500 and 15000.')
       .default(5000),
   ),
+  PAYMENT_PROOF_ENABLED: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.enum(['true', 'false'], { message: 'PAYMENT_PROOF_ENABLED must be true or false.' }).default('false'),
+  ).transform((value) => value === 'true'),
+  PAYMENT_PROOF_ALLOWED_ORIGIN: z.string().default('https://yc-fitness-uat.sgp1.digitaloceanspaces.com'),
+  PAYMENT_PROOF_BUCKET: z.string().default('yc-fitness-uat'),
+  PAYMENT_PROOF_KEY_PREFIX: z.string().default('payment-attachments/'),
+  PAYMENT_PROOF_MAX_BYTES: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.coerce.number().int().min(1024).max(25 * 1024 * 1024).default(5 * 1024 * 1024),
+  ),
+  PAYMENT_PROOF_MAX_PIXELS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.coerce.number().int().min(1_000_000).max(100_000_000).default(40_000_000),
+  ),
+  PAYMENT_PROOF_TIMEOUT_MS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.coerce.number().int().min(100).max(15_000).default(5000),
+  ),
 });
 
 const parsedEnvironment = environmentSchema.safeParse(process.env);

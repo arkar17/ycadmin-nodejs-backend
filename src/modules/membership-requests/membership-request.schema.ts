@@ -27,5 +27,14 @@ export const membershipRequestListQuerySchema = z
 
 export type MembershipRequestListQuery = z.output<typeof membershipRequestListQuerySchema>;
 const params = z.object({ id });
+const proofParams = z.object({ requestId: id, paymentId: id }).strict();
+const decisionBody = z.object({ paymentId: z.number().int().positive() }).strict();
+const rejectBody = decisionBody.extend({ reason: z.string().trim().min(1).max(2_000) }).strict();
 export const membershipRequestListRequestSchema = z.object({ body: z.unknown(), params: z.object({}), query: membershipRequestListQuerySchema });
 export const membershipRequestDetailRequestSchema = z.object({ body: z.unknown(), params, query: z.object({}).strict() });
+export const membershipRequestApproveRequestSchema = z.object({ body: decisionBody, params, query: z.object({}).strict() });
+export const membershipRequestRejectRequestSchema = z.object({ body: rejectBody, params, query: z.object({}).strict() });
+export const membershipRequestProofRequestSchema = z.object({ body: z.unknown(), params: proofParams, query: z.object({}).strict() });
+
+export type MembershipRequestApproveInput = z.infer<typeof decisionBody>;
+export type MembershipRequestRejectInput = z.infer<typeof rejectBody>;

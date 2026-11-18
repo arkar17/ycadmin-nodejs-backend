@@ -41,7 +41,7 @@ by the router. Node attendance is intentionally hidden outside `import.meta.env.
 | `/members` | `GET` | Read-only directory; `member:list`; current-plan filtering is rejected. |
 | `/attendance` | `GET`, `POST /manual` | Implemented in isolated foundation; list requires `attendance:list`, manual requires `attendance:create`. |
 | `/attendance/qr` | `GET`, `POST` | Implemented locally; requires proposed `attendance-qr:read/create` plus key configuration. |
-| `/membership-requests` | `GET`, `GET /:id` | Read-only; list/read permissions. |
+| `/membership-requests` | `GET`, `GET /:id`, `POST /:id/approve`, `POST /:id/reject` | Safe reads plus transactional decisions; list/read/update permissions. |
 | `/feedback` | `GET`, `GET /:id` | Read-only; proposed `feedback:list/read`. |
 | `/plan-durations` | `GET`, `POST`, `PATCH /:id`, `DELETE /:id` | Complete safe subset; proposed duration permissions. |
 | `/member-types` | `GET` | Read-only reference data; not Odoo plan-level types. |
@@ -60,13 +60,13 @@ module barrels (`qr`, and several older module indexes) are not endpoints.
 The audit counts **40 distinct user-visible operations** defined by current reachable
 screens or their local Node counterparts:
 
-- **4 backend-complete operations:** Plan Duration list/create/update/delete. They still
-  need approved shared `plan-duration:*` permission provisioning and a frontend REST
-  adapter before production use.
+- **6 backend-complete operations:** Plan Duration list/create/update/delete plus
+  Membership Request approve/reject. They still need their respective approved
+  permission provisioning and a frontend REST adapter before production use.
 - **28 partially supported operations:** an equivalent Node endpoint or local UI exists,
   but an Odoo-to-REST adapter, permission provisioning, contract field changes, shared
   migration/mobile rollout, or production session/proxy work remains.
-- **8 blocked operations:** membership-request approve/reject; Odoo plan-level-type
+- **6 blocked operations:** Odoo plan-level-type
   CRUD; workout create/delete. Each lacks a safe authoritative data/business contract.
 
 “Backend-complete” does not mean deployed or frontend-migrated. No current production

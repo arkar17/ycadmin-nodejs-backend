@@ -131,7 +131,8 @@ adminV1Router.use(
   }),
 );
 
-// Read-only routes registered after mocked and isolated PostgreSQL integration verification.
+// Safe reads and transactional membership decisions registered after mocked and
+// isolated PostgreSQL integration verification.
 adminV1Router.use(
   '/membership-requests',
   createMembershipRequestRouter({
