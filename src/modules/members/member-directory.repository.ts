@@ -1,6 +1,7 @@
 import type { ClientType, Gender, Prisma } from '@prisma/client';
 
 import { getPrismaClient } from '../../database/prisma.js';
+import { PrismaMemberManagementRepository } from './member-management.repository.js';
 
 export type MemberDirectoryQuery = {
   name?: string;
@@ -44,7 +45,7 @@ const createWhere = ({ name, contact }: MemberDirectoryQuery): Prisma.MemberWher
 });
 
 /** Schema-backed repository; use only after isolated database integration is approved. */
-export class PrismaMemberDirectoryRepository implements MemberDirectoryRepository {
+export class PrismaMemberDirectoryRepository extends PrismaMemberManagementRepository implements MemberDirectoryRepository {
   public async findPage(query: MemberDirectoryQuery): Promise<MemberDirectoryPage> {
     const prisma = getPrismaClient();
     const where = createWhere(query);
