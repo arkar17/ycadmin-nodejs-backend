@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 
 import { sendCollection, sendData } from '../../shared/api-response.js';
-import type { ShopPlanLevelDetailParams, ShopPlanLevelListQuery } from './shop-plan-level.schema.js';
+import type { ShopPlanLevelCreateInput, ShopPlanLevelDetailParams, ShopPlanLevelListQuery, ShopPlanLevelUpdateInput } from './shop-plan-level.schema.js';
 import type { ShopPlanLevelService } from './shop-plan-level.service.js';
 
 export class ShopPlanLevelController {
@@ -22,5 +22,19 @@ export class ShopPlanLevelController {
   public readonly detail = async (request: Request, response: Response) => {
     const params = request.validated?.params as ShopPlanLevelDetailParams;
     return sendData(response, await this.service.detail(params.id));
+  };
+
+  public readonly create = async (request: Request, response: Response) =>
+    sendData(response, await this.service.create(request.validated?.body as ShopPlanLevelCreateInput, request.auth!.userId), 201);
+
+  public readonly update = async (request: Request, response: Response) => {
+    const params = request.validated?.params as ShopPlanLevelDetailParams;
+    return sendData(response, await this.service.update(params.id, request.validated?.body as ShopPlanLevelUpdateInput, request.auth!.userId));
+  };
+
+  public readonly remove = async (request: Request, response: Response) => {
+    const params = request.validated?.params as ShopPlanLevelDetailParams;
+    await this.service.remove(params.id);
+    return response.status(204).send();
   };
 }

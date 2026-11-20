@@ -184,8 +184,8 @@ adminV1Router.use(
   }),
 );
 
-// ShopLevel is a distinct mobile shop catalogue. Only its verified read contract is
-// exposed; Odoo's level_count workflow and all mutations remain intentionally deferred.
+// ShopLevel is the canonical mobile shop catalogue. Mutations preserve its PlanDuration-backed
+// month value and postLimit semantics; no legacy Odoo level_count model is exposed.
 adminV1Router.use(
   '/shop-plan-levels',
   createShopPlanLevelRouter({
