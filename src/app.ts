@@ -2,14 +2,21 @@ import express from 'express';
 import { pinoHttp } from 'pino-http';
 import type { IncomingMessage } from 'node:http';
 
+import { env } from './config/env.js';
 import { logger } from './config/logger.js';
+import type { TrustProxySetting } from './config/trust-proxy.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { apiRouter } from './routes/index.js';
 
-export const createApp = (): express.Express => {
+export type AppOptions = { trustProxy?: TrustProxySetting };
+
+export const createApp = (options: AppOptions = {}): express.Express => {
   const app = express();
 
   app.disable('x-powered-by');
+  // Only an explicitly validated setting is used; the default (false) trusts no forwarded headers.
+  const trustProxy = options.trustProxy ?? env.ADMIN_TRUST_PROXY;
+  app.set('trust proxy', Array.isArray(trustProxy) ? [...trustProxy] : trustProxy);
   app.use(
     pinoHttp({
       logger,

@@ -31,7 +31,9 @@ export class LoginRateLimiter {
 }
 
 export const createLoginRateLimit = (limiter: LoginRateLimiter): RequestHandler => (request, _response, next) => {
-  // Express derives req.ip from the peer unless an explicitly trusted proxy is configured.
+  // req.ip is the TCP peer unless ADMIN_TRUST_PROXY names the trusted reverse-proxy hops; then it is
+  // the first untrusted address in X-Forwarded-For, counted from the right (client-supplied entries
+  // further left are ignored).
   if (!limiter.consume(request.ip ?? 'unknown')) {
     return next(new AppError({ statusCode: 429, code: 'LOGIN_THROTTLED', message: 'Too many sign-in attempts. Please try again later.' }));
   }

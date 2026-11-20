@@ -95,10 +95,45 @@ that was copied before logout. The short browser lifetime bounds that exposure.
 Disabling the User, removing all active Roles, or changing active Permissions still
 takes effect on the next request because authorization is database-rehydrated.
 
-The existing login limiter remains process-local at ten attempts per apparent IP per
-15 minutes. A multi-instance production deployment still requires trusted-proxy
-configuration and shared ingress/store-backed throttling. Redis is not introduced by
-this release.
+The existing login limiter remains process-local at ten attempts per apparent client IP
+per 15 minutes (successful attempts count). A multi-instance production deployment still
+requires shared ingress/store-backed throttling. Redis is not introduced by this release.
+
+## Trusted proxy configuration (`ADMIN_TRUST_PROXY`)
+
+The limiter keys on Express `req.ip`. Without configuration Express uses the TCP peer, so
+behind the `/node-api` reverse proxy every Admin would share the proxy's bucket.
+`ADMIN_TRUST_PROXY` sets Express `trust proxy` from a validated value:
+
+| Value | Meaning |
+| --- | --- |
+| empty / `false` (default) | Trust nothing. `X-Forwarded-For` is ignored; `req.ip` is the TCP peer. |
+| `1`-`5` | Trust exactly that many proxy hops. The TCP peer counts as the first hop, so `req.ip` is the N-th address from the right of `X-Forwarded-For` (`1` = the right-most entry). Entries further left, which the client can forge, are ignored. |
+| comma list | Trust only peers matching these IPs, CIDR subnets (IPv4 prefix ≥ /8, IPv6 ≥ /16) or presets `loopback`, `linklocal`, `uniquelocal`. |
+
+`true`, `0`, functions, over-broad subnets and malformed entries fail startup validation.
+
+Production setup:
+
+1. Count every reverse proxy between the browser and this process that appends to
+   `X-Forwarded-For` — for example the frontend host's `/node-api` rewrite edge, plus any
+   platform load balancer or ingress in front of the container. Set `ADMIN_TRUST_PROXY` to
+   that exact count. A direct `/node-api` edge → container route is `1`; edge → platform
+   load balancer → container is `2`. Confirm the topology with the hosting provider before
+   deploying; do not guess.
+2. If the immediate proxies have stable, documented addresses (for example an internal
+   load-balancer subnet), prefer an explicit address list over a hop count.
+3. The service must be reachable **only** through those proxies. With a hop count, the
+   nearest peer is trusted unconditionally: if the backend is also reachable directly, a
+   client can send its own `X-Forwarded-For` and choose its rate-limit key. Restrict
+   inbound traffic to the proxy path (firewall, private networking or platform ingress
+   rules) or leave the setting at `false`.
+4. Too low a count reintroduces a shared proxy bucket; too high a count lets clients
+   choose their key. Verify after deployment that two Admins on different networks are
+   throttled independently.
+
+Only the login limiter reads `req.ip` today; the setting does not change the cookie,
+Origin/Referer checks, JWT handling or RBAC.
 
 ## Future hardening
 

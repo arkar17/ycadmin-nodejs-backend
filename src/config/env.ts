@@ -1,6 +1,8 @@
 import { config as loadEnvironment } from 'dotenv';
 import { z } from 'zod';
 
+import { parseTrustProxy } from './trust-proxy.js';
+
 loadEnvironment({ quiet: true });
 
 const optionalSecret = z.preprocess(
@@ -33,6 +35,15 @@ const environmentSchema = z.object({
     z.coerce.number().int().min(900).max(43_200).default(28_800),
   ),
   ADMIN_AUTH_ALLOWED_ORIGIN: optionalOrigin,
+  // Express `trust proxy`. Default false: only the TCP peer is trusted. See src/config/trust-proxy.ts.
+  ADMIN_TRUST_PROXY: z.string().optional().transform((value, context) => {
+    try {
+      return parseTrustProxy(value);
+    } catch (error) {
+      context.addIssue({ code: 'custom', message: error instanceof Error ? error.message : 'is invalid.' });
+      return z.NEVER;
+    }
+  }),
   DATABASE_URL: z.string().url().optional(),
   // These are deliberately optional so health checks and APIs unrelated to QR
   // management can start without decryption capability. The QR route fails
