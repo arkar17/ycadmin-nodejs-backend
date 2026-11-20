@@ -10,9 +10,14 @@ import request from 'supertest';
 
 import { disconnectDatabase, getPrismaClient } from '../../database/prisma.js';
 import { errorHandler } from '../../middleware/error-handler.js';
+import type { PaymentProofConfig } from '../../config/payment-proof.js';
 import { assertIsolatedIntegrationDatabaseUrl } from '../../tests/integration-database-safety.js';
 import { PrismaAdminIdentityRepository } from '../auth/admin-identity.repository.js';
 import { FcmPaymentPushNotificationService } from './fcm-payment-push.service.js';
+import type { PaymentProofFetcher } from '../payment-proof/payment-proof.fetcher.js';
+import type { PaymentProofImageNormalizer } from '../payment-proof/payment-proof.image.js';
+import { PaymentProofService } from './payment-proof.service.js';
+import { PrismaPaymentRepository } from './payment.repository.js';
 import type { PaymentPushNotificationService } from './payment-push.service.js';
 import { createPaymentRouter } from './payment.router.js';
 
@@ -36,16 +41,34 @@ type Fixture = {
   originalShopLevelId: number;
 };
 
-const app = (push?: PaymentPushNotificationService) => {
+const app = (push?: PaymentPushNotificationService, paymentProofService?: PaymentProofService) => {
   const value = express();
   value.use(express.json());
   value.use('/api/admin/v1/payments', createPaymentRouter({
     adminIdentityRepository: new PrismaAdminIdentityRepository(),
     ...(push ? { paymentPushNotificationService: push } : {}),
+    ...(paymentProofService ? { paymentProofService } : {}),
   }));
   value.use(errorHandler);
   return value;
 };
+
+const proofConfig: PaymentProofConfig = {
+  enabled: true,
+  allowedOrigin: 'https://yc-fitness-uat.sgp1.digitaloceanspaces.com',
+  bucket: 'yc-fitness-uat',
+  keyPrefix: 'payment-attachments/',
+  maxBytes: 5_242_880,
+  maxPixels: 40_000_000,
+  timeoutMs: 5_000,
+};
+const canonicalProof = (suffix: string) =>
+  `https://yc-fitness-uat.sgp1.digitaloceanspaces.com/yc-fitness-uat/payment-attachments/123e4567-e89b-42d3-a456-4266141740${suffix}.png`;
+const testProofService = (
+  repository = new PrismaPaymentRepository(),
+  fetcher: PaymentProofFetcher = { fetch: vi.fn(async () => ({ bytes: Buffer.from('input'), mediaType: 'image/png' })) },
+  normalizer: PaymentProofImageNormalizer = { normalize: vi.fn(async () => Buffer.from('normalized-test-webp')) },
+) => new PaymentProofService(repository, proofConfig, fetcher, normalizer);
 
 const reset = async (): Promise<Fixture> => {
   assertIsolatedIntegrationDatabaseUrl(process.env.DATABASE_URL);
@@ -124,7 +147,7 @@ const reset = async (): Promise<Fixture> => {
       memberRequestId: memberRequest.id,
       bankInformationId: bank.id,
       amount: 30_000,
-      attachment: 'private/member-proof-key',
+      attachment: canonicalProof('00'),
       status: PaymentStatus.DRAFT,
       cancelledById: secondAdmin.id,
       cancelledAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -138,7 +161,7 @@ const reset = async (): Promise<Fixture> => {
       shopUpgradeRequestId: shopRequest.id,
       bankInformationId: bank.id,
       amount: 50_000,
-      attachment: 'private/shop-proof-key',
+      attachment: canonicalProof('01'),
       status: PaymentStatus.DRAFT,
       approvedById: secondAdmin.id,
       approvedAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -151,7 +174,7 @@ const reset = async (): Promise<Fixture> => {
       memberTypeId: gymType.id,
       bankInformationId: bank.id,
       amount: 30_000,
-      attachment: 'private/standalone-proof-key',
+      attachment: canonicalProof('02'),
       status: PaymentStatus.DRAFT,
     } }),
     prisma.payment.create({ data: {
@@ -209,13 +232,62 @@ describe('Payment management on isolated PostgreSQL', () => {
     const detail = await request(value).get(`/api/admin/v1/payments/${fixture.memberPaymentId}`).set('Authorization', authorization);
     expect(list.status).toBe(200);
     expect(list.body.data).toHaveLength(2);
-    expect(list.body.data).toEqual(expect.arrayContaining([expect.objectContaining({ id: fixture.memberPaymentId, status: 'DRAFT', hasPaymentProof: true })]));
+    expect(list.body.data).toEqual(expect.arrayContaining([expect.objectContaining({
+      id: fixture.memberPaymentId,
+      status: 'DRAFT',
+      hasPaymentProof: true,
+      paymentProofStatus: 'FEATURE_DISABLED',
+    })]));
     expect(detail.body.data).toMatchObject({
       id: fixture.memberPaymentId,
       memberRequest: { id: fixture.memberRequestId, status: 'PENDING' },
       bankInformation: { name: 'Payment Test Bank' },
     });
-    expect(JSON.stringify([list.body, detail.body])).not.toMatch(/private\/|attachment|1234567890123456|Sensitive Holder|09123456789/);
+    expect(JSON.stringify([list.body, detail.body])).not.toMatch(/digitaloceanspaces|payment-attachments|attachment|1234567890123456|Sensitive Holder|09123456789/);
+  });
+
+  it('views standalone and request-managed proofs without mutating any workflow state', async () => {
+    const prisma = getPrismaClient();
+    const repository = new PrismaPaymentRepository();
+    const fetcher: PaymentProofFetcher = { fetch: vi.fn(async () => ({ bytes: Buffer.from('input'), mediaType: 'image/png' })) };
+    const normalizer: PaymentProofImageNormalizer = { normalize: vi.fn(async () => Buffer.from('normalized-test-webp')) };
+    const value = app(undefined, testProofService(repository, fetcher, normalizer));
+    const authorization = `Bearer ${token(fixture.firstAdminId)}`;
+    const before = await Promise.all([
+      prisma.payment.findMany({ orderBy: { id: 'asc' } }),
+      prisma.memberRequest.findMany({ orderBy: { id: 'asc' } }),
+      prisma.shopUpgradeRequest.findMany({ orderBy: { id: 'asc' } }),
+      prisma.member.findMany({ orderBy: { id: 'asc' } }),
+      prisma.shop.findMany({ orderBy: { id: 'asc' } }),
+      prisma.notification.findMany({ orderBy: { id: 'asc' } }),
+    ]);
+
+    const responses = await Promise.all([
+      request(value).get(`/api/admin/v1/payments/${fixture.standalonePaymentId}/proof`).set('Authorization', authorization),
+      request(value).get(`/api/admin/v1/payments/${fixture.memberPaymentId}/proof`).set('Authorization', authorization),
+      request(value).get(`/api/admin/v1/payments/${fixture.shopPaymentId}/proof`).set('Authorization', authorization),
+    ]);
+    const after = await Promise.all([
+      prisma.payment.findMany({ orderBy: { id: 'asc' } }),
+      prisma.memberRequest.findMany({ orderBy: { id: 'asc' } }),
+      prisma.shopUpgradeRequest.findMany({ orderBy: { id: 'asc' } }),
+      prisma.member.findMany({ orderBy: { id: 'asc' } }),
+      prisma.shop.findMany({ orderBy: { id: 'asc' } }),
+      prisma.notification.findMany({ orderBy: { id: 'asc' } }),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 200]);
+    for (const response of responses) {
+      expect(response.body).toEqual(Buffer.from('normalized-test-webp'));
+      expect(response.headers['content-type']).toBe('image/webp');
+      expect(JSON.stringify(response.headers)).not.toContain('digitaloceanspaces');
+    }
+    expect(fetcher.fetch).toHaveBeenCalledTimes(3);
+    expect(fetcher.fetch).toHaveBeenCalledWith('https://yc-fitness-uat.sgp1.digitaloceanspaces.com/payment-attachments/123e4567-e89b-42d3-a456-426614174002.png');
+    expect(after).toEqual(before);
+
+    const disabled = await request(app()).get(`/api/admin/v1/payments/${fixture.standalonePaymentId}/proof`).set('Authorization', authorization);
+    expect([disabled.status, disabled.body.error.code]).toEqual([503, 'PAYMENT_PROOF_UNAVAILABLE']);
   });
 
   it('blocks request-managed payments while leaving reads intact and allowing an unrelated payment', async () => {

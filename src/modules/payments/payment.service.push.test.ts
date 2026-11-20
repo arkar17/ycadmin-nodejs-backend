@@ -4,6 +4,7 @@ import pino from 'pino';
 import { loggerRedaction } from '../../config/logger.js';
 import type { FcmSender } from '../../integrations/firebase/firebase-messaging.js';
 import { FcmPaymentPushNotificationService } from './fcm-payment-push.service.js';
+import type { PaymentProofService } from './payment-proof.service.js';
 import { DisabledPaymentPushNotificationService } from './payment-push.service.js';
 import type { PaymentDecisionResult, PaymentRecord, PaymentRepository } from './payment.repository.js';
 import { PaymentService } from './payment.service.js';
@@ -35,6 +36,7 @@ const payment = (status: PaymentStatus) => ({
   memberRequest: null,
   shopUpgradeRequest: null,
   hasPaymentProof: true,
+  paymentProofAttachment: '',
   createdAt: date,
   updatedAt: date,
 }) as unknown as PaymentRecord;
@@ -43,6 +45,7 @@ const payment = (status: PaymentStatus) => ({
 const repository = (result: Partial<PaymentDecisionResult> = {}): PaymentRepository => ({
   findPage: vi.fn(),
   findById: vi.fn(),
+  findPaymentProofContext: vi.fn(),
   decide: vi.fn(async (input) => {
     const accepted = input.decision === 'accept';
     const text = accepted ? ACCEPTED : DECLINED;
@@ -54,6 +57,11 @@ const repository = (result: Partial<PaymentDecisionResult> = {}): PaymentReposit
     };
   }),
 });
+
+const proof = {
+  describe: vi.fn(() => ({ hasPaymentProof: false, paymentProofStatus: 'MISSING' })),
+  get: vi.fn(),
+} as unknown as PaymentProofService;
 
 const capturedLogger = () => {
   const lines: string[] = [];
@@ -74,7 +82,7 @@ describe('PaymentService with the FCM adapter', () => {
   ] as const)('sends the exact %s payload after commit', async (decision, text, status) => {
     const sender = { send: vi.fn(async () => 'projects/fake/messages/1') };
     const { log, text: logs } = capturedLogger();
-    const service = new PaymentService(repository(), new FcmPaymentPushNotificationService(sender, { timeoutMs: 5000 }, log), log);
+    const service = new PaymentService(repository(), new FcmPaymentPushNotificationService(sender, { timeoutMs: 5000 }, log), log, proof);
 
     const result = decision === 'accept'
       ? await service.accept(7, 1, 'req-1')
@@ -95,7 +103,7 @@ describe('PaymentService with the FCM adapter', () => {
     const repo = repository();
     const sender = failingSender(code);
     const { log, lines, text } = capturedLogger();
-    const service = new PaymentService(repo, new FcmPaymentPushNotificationService(sender, { timeoutMs: 5000 }, log), log);
+    const service = new PaymentService(repo, new FcmPaymentPushNotificationService(sender, { timeoutMs: 5000 }, log), log, proof);
 
     const result = await service.accept(7, 1, 'req-2');
 
@@ -120,7 +128,7 @@ describe('PaymentService with the FCM adapter', () => {
     const sender = { send: vi.fn(async () => 'unused') };
     const { log } = capturedLogger();
     const repo = repository({ changed: false, pushTarget: null });
-    const service = new PaymentService(repo, new FcmPaymentPushNotificationService(sender, { timeoutMs: 5000 }, log), log);
+    const service = new PaymentService(repo, new FcmPaymentPushNotificationService(sender, { timeoutMs: 5000 }, log), log, proof);
 
     const result = await service.accept(7, 1, 'req-3');
 
@@ -131,7 +139,7 @@ describe('PaymentService with the FCM adapter', () => {
   it('does not send push when the member has no FCM token', async () => {
     const sender = { send: vi.fn(async () => 'unused') };
     const { log } = capturedLogger();
-    const service = new PaymentService(repository({ pushTarget: null }), new FcmPaymentPushNotificationService(sender, { timeoutMs: 5000 }, log), log);
+    const service = new PaymentService(repository({ pushTarget: null }), new FcmPaymentPushNotificationService(sender, { timeoutMs: 5000 }, log), log, proof);
     await service.accept(7, 1, 'req-4');
     expect(sender.send).not.toHaveBeenCalled();
   });
@@ -140,7 +148,7 @@ describe('PaymentService with the FCM adapter', () => {
     const { log, lines } = capturedLogger();
     const disabled = new DisabledPaymentPushNotificationService();
     const send = vi.spyOn(disabled, 'send');
-    const service = new PaymentService(repository(), disabled, log);
+    const service = new PaymentService(repository(), disabled, log, proof);
 
     const result = await service.accept(7, 1, 'req-5');
 

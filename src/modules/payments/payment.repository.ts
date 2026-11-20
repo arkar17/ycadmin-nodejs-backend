@@ -9,6 +9,7 @@ import { getPrismaClient } from '../../database/prisma.js';
 import { AppError } from '../../shared/app-error.js';
 import { runWithSerializableRetry } from '../admin-rbac/serializable-transaction.js';
 import type { PaymentListQuery } from './payment.schema.js';
+import type { PaymentProofContext } from '../payment-proof/payment-proof.service.js';
 
 const paymentSelect = {
   id: true,
@@ -47,7 +48,11 @@ const paymentSelect = {
 } satisfies Prisma.PaymentSelect;
 
 type SelectedPayment = Prisma.PaymentGetPayload<{ select: typeof paymentSelect }>;
-export type PaymentRecord = Omit<SelectedPayment, 'attachment'> & { hasPaymentProof: boolean };
+export type PaymentRecord = Omit<SelectedPayment, 'attachment'> & {
+  hasPaymentProof: boolean;
+  /** Internal only. DTO mappers must never return this stored value. */
+  paymentProofAttachment: string;
+};
 export type PaymentPage = { records: PaymentRecord[]; total: number };
 export type PaymentDecision = 'accept' | 'decline';
 export type PaymentDecisionResult = {
@@ -59,12 +64,14 @@ export type PaymentDecisionResult = {
 export interface PaymentRepository {
   findPage(query: PaymentListQuery): Promise<PaymentPage>;
   findById(id: number): Promise<PaymentRecord | null>;
+  findPaymentProofContext(id: number): Promise<PaymentProofContext | null>;
   decide(input: { paymentId: number; actorUserId: number; decision: PaymentDecision; reason?: string }): Promise<PaymentDecisionResult>;
 }
 
 const toRecord = ({ attachment, ...payment }: SelectedPayment): PaymentRecord => ({
   ...payment,
   hasPaymentProof: attachment.trim().length > 0,
+  paymentProofAttachment: attachment,
 });
 
 const notFound = () => new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Payment was not found.' });
@@ -147,6 +154,10 @@ export class PrismaPaymentRepository implements PaymentRepository {
   public async findById(id: number): Promise<PaymentRecord | null> {
     const payment = await getPrismaClient().payment.findUnique({ where: { id }, select: paymentSelect });
     return payment ? toRecord(payment) : null;
+  }
+
+  public async findPaymentProofContext(id: number): Promise<PaymentProofContext | null> {
+    return getPrismaClient().payment.findUnique({ where: { id }, select: { attachment: true } });
   }
 
   public decide(input: { paymentId: number; actorUserId: number; decision: PaymentDecision; reason?: string }): Promise<PaymentDecisionResult> {

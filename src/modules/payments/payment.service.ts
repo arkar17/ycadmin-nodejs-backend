@@ -4,6 +4,7 @@ import { AppError } from '../../shared/app-error.js';
 import type { PaymentPushNotificationService } from './payment-push.service.js';
 import type { PaymentDecision, PaymentRecord, PaymentRepository } from './payment.repository.js';
 import type { PaymentListQuery } from './payment.schema.js';
+import type { PaymentProofService } from './payment-proof.service.js';
 
 const notFound = () => new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Payment was not found.' });
 
@@ -12,6 +13,7 @@ export class PaymentService {
     private readonly repository: PaymentRepository,
     private readonly pushNotifications: PaymentPushNotificationService,
     private readonly log: Pick<Logger, 'warn'>,
+    private readonly paymentProof: PaymentProofService,
   ) {}
 
   public async list(query: PaymentListQuery) {
@@ -23,6 +25,10 @@ export class PaymentService {
     const payment = await this.repository.findById(id);
     if (!payment) throw notFound();
     return this.toDetail(payment);
+  }
+
+  public proof(id: number): Promise<Buffer> {
+    return this.paymentProof.get(id);
   }
 
   public accept(paymentId: number, actorUserId: number, requestId: string) {
@@ -73,7 +79,7 @@ export class PaymentService {
     status: payment.status,
     approval: payment.approvedAt ? { by: payment.approvedBy, at: payment.approvedAt.toISOString() } : null,
     decline: payment.cancelledAt ? { by: payment.cancelledBy, at: payment.cancelledAt.toISOString(), reason: payment.cancelledReason } : null,
-    hasPaymentProof: payment.hasPaymentProof,
+    ...this.paymentProof.describe(payment),
     createdAt: payment.createdAt.toISOString(),
     updatedAt: payment.updatedAt.toISOString(),
   });

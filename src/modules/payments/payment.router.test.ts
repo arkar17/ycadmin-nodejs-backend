@@ -10,9 +10,13 @@ import request from 'supertest';
 
 import { errorHandler } from '../../middleware/error-handler.js';
 import { AppError } from '../../shared/app-error.js';
+import type { PaymentProofConfig } from '../../config/payment-proof.js';
 import { SYSTEM_ADMIN_ROLE_NAME } from '../auth/admin-access-policy.js';
 import type { AdminIdentityRepository } from '../auth/admin-identity.repository.js';
+import { PaymentProofFetchFailure, type PaymentProofFetcher } from '../payment-proof/payment-proof.fetcher.js';
+import { PaymentProofImageFailure, type PaymentProofImageNormalizer } from '../payment-proof/payment-proof.image.js';
 import { FcmPaymentPushNotificationService } from './fcm-payment-push.service.js';
+import { PaymentProofService } from './payment-proof.service.js';
 import type { PaymentPushNotificationService } from './payment-push.service.js';
 import type { PaymentRecord, PaymentRepository } from './payment.repository.js';
 import { createPaymentRouter } from './payment.router.js';
@@ -21,8 +25,18 @@ const secret = 'test-only-secret-with-at-least-thirty-two-characters';
 const token = (id = 1) => jwt.sign({ id, loginType: 'admin' }, secret, { algorithm: 'HS256', expiresIn: '1h' });
 const auth = (id = 1) => ({ Authorization: `Bearer ${token(id)}` });
 const date = new Date('2026-11-17T00:00:00.000Z');
+const canonicalProof = 'https://yc-fitness-uat.sgp1.digitaloceanspaces.com/yc-fitness-uat/payment-attachments/123e4567-e89b-42d3-a456-426614174000.png';
+const proofConfig = (enabled = true): PaymentProofConfig => ({
+  enabled,
+  allowedOrigin: 'https://yc-fitness-uat.sgp1.digitaloceanspaces.com',
+  bucket: 'yc-fitness-uat',
+  keyPrefix: 'payment-attachments/',
+  maxBytes: 5_242_880,
+  maxPixels: 40_000_000,
+  timeoutMs: 5_000,
+});
 
-const record = (status = PaymentStatus.DRAFT): PaymentRecord => ({
+const record = (status = PaymentStatus.DRAFT, paymentProofAttachment = canonicalProof): PaymentRecord => ({
   id: 7,
   name: 'YC/26/000007',
   memberId: 20,
@@ -52,11 +66,13 @@ const record = (status = PaymentStatus.DRAFT): PaymentRecord => ({
   memberRequest: { id: 50, status: MemberRequestStatus.PENDING, memberId: 20, memberPlanId: 30, memberTypeId: 40 },
   shopUpgradeRequest: null,
   hasPaymentProof: true,
+  paymentProofAttachment,
 });
 
 const repository = (overrides: Partial<PaymentRepository> = {}): PaymentRepository => ({
   findPage: vi.fn(async () => ({ records: [record()], total: 1 })),
   findById: vi.fn(async (id) => id === 7 ? record() : null),
+  findPaymentProofContext: vi.fn(async (id) => id === 7 ? { attachment: canonicalProof } : null),
   decide: vi.fn(async (input) => {
     const status = input.decision === 'accept' ? PaymentStatus.ACCEPT : PaymentStatus.DECLINE;
     return {
@@ -77,6 +93,7 @@ const app = (
   permissionNames = ['payment:list', 'payment:read', 'payment:update'],
   roleNames: string[] = [],
   push: PaymentPushNotificationService = { send: vi.fn(async () => undefined) },
+  paymentProofService?: PaymentProofService,
 ) => {
   const value = express();
   value.use(express.json());
@@ -84,10 +101,18 @@ const app = (
     adminIdentityRepository: identity(permissionNames, roleNames),
     paymentRepository,
     paymentPushNotificationService: push,
+    ...(paymentProofService ? { paymentProofService } : {}),
   }));
   value.use(errorHandler);
   return value;
 };
+
+const proofService = (
+  repo: PaymentRepository,
+  config: PaymentProofConfig = proofConfig(),
+  fetcher: PaymentProofFetcher = { fetch: vi.fn(async () => ({ bytes: Buffer.from('source'), mediaType: 'image/png' })) },
+  normalizer: PaymentProofImageNormalizer = { normalize: vi.fn(async () => Buffer.from('normalized-webp')) },
+) => new PaymentProofService(repo, config, fetcher, normalizer);
 
 describe('Payment router', () => {
   it('enforces list/read permissions while preserving System Admin bypass', async () => {
@@ -118,6 +143,109 @@ describe('Payment router', () => {
     expect(detail.body.data).toMatchObject({ memberRequest: { id: 50, status: 'PENDING' }, bankInformation: { name: 'Safe Bank Name' } });
     expect(JSON.stringify([list.body, detail.body])).not.toMatch(/attachment|never-return-this-token|accountNumber|bankAccountHolder|phone/i);
     expect(missing.status).toBe(404);
+  });
+
+  it('classifies proof metadata without returning the stored attachment', async () => {
+    const cases = [
+      { attachment: canonicalProof, config: proofConfig(), status: 'AVAILABLE', hasPath: true },
+      { attachment: '', config: proofConfig(), status: 'MISSING', hasPath: false },
+      { attachment: 'private/legacy-proof-key', config: proofConfig(), status: 'UNSUPPORTED_FORMAT', hasPath: false },
+      { attachment: canonicalProof, config: proofConfig(false), status: 'FEATURE_DISABLED', hasPath: false },
+    ] as const;
+
+    for (const item of cases) {
+      const payment = record(PaymentStatus.DRAFT, item.attachment);
+      const repo = repository({
+        findPage: vi.fn(async () => ({ records: [payment], total: 1 })),
+        findById: vi.fn(async () => payment),
+        findPaymentProofContext: vi.fn(async () => ({ attachment: item.attachment })),
+      });
+      const value = app(repo, undefined, [], undefined, proofService(repo, item.config));
+      const list = await request(value).get('/api/admin/v1/payments').set(auth());
+      const detail = await request(value).get('/api/admin/v1/payments/7').set(auth());
+      for (const dto of [list.body.data[0], detail.body.data]) {
+        expect(dto).toMatchObject({
+          hasPaymentProof: item.attachment.length > 0,
+          paymentProofStatus: item.status,
+        });
+        if (item.hasPath) expect(dto.paymentProofPath).toBe('/api/admin/v1/payments/7/proof');
+        else expect(dto).not.toHaveProperty('paymentProofPath');
+        expect(dto).not.toHaveProperty('paymentProofAttachment');
+        if (item.attachment.length > 0) expect(JSON.stringify(dto)).not.toContain(item.attachment);
+      }
+    }
+  });
+
+  it('protects proof viewing, supports System Admin bypass, and returns normalized WebP with safe headers', async () => {
+    const repo = repository();
+    const fetcher: PaymentProofFetcher = { fetch: vi.fn(async () => ({ bytes: Buffer.from('source'), mediaType: 'image/png' })) };
+    const normalizer: PaymentProofImageNormalizer = { normalize: vi.fn(async () => Buffer.from('normalized-webp')) };
+    const service = proofService(repo, proofConfig(), fetcher, normalizer);
+    const denied = await request(app(repo, ['payment:list'], [], undefined, service)).get('/api/admin/v1/payments/7/proof').set(auth());
+    const response = await request(app(repo, ['payment:read'], [], undefined, service)).get('/api/admin/v1/payments/7/proof').set(auth());
+    const bypass = await request(app(repo, [], [SYSTEM_ADMIN_ROLE_NAME], undefined, service)).get('/api/admin/v1/payments/7/proof').set(auth());
+
+    expect(denied.status).toBe(403);
+    expect([response.status, bypass.status]).toEqual([200, 200]);
+    expect(response.body).toEqual(Buffer.from('normalized-webp'));
+    expect(response.headers).toMatchObject({
+      'content-type': 'image/webp',
+      'content-disposition': 'inline; filename="payment-proof.webp"',
+      'x-content-type-options': 'nosniff',
+      'cache-control': 'private, no-store, max-age=0',
+      'content-security-policy': "sandbox; default-src 'none'",
+    });
+    expect(fetcher.fetch).toHaveBeenCalledWith('https://yc-fitness-uat.sgp1.digitaloceanspaces.com/payment-attachments/123e4567-e89b-42d3-a456-426614174000.png');
+    expect(repo.decide).not.toHaveBeenCalled();
+  });
+
+  it('returns safe missing, disabled, and unsupported proof errors before any fetch', async () => {
+    const fetcher: PaymentProofFetcher = { fetch: vi.fn() };
+    const missingPayment = repository({ findPaymentProofContext: vi.fn(async () => null) });
+    const missingProof = repository({ findPaymentProofContext: vi.fn(async () => ({ attachment: '' })) });
+    const unsupported = repository({ findPaymentProofContext: vi.fn(async () => ({ attachment: 'private/legacy-proof-key' })) });
+    const disabled = repository();
+
+    const responses = await Promise.all([
+      request(app(missingPayment, undefined, [], undefined, proofService(missingPayment, proofConfig(), fetcher))).get('/api/admin/v1/payments/999/proof').set(auth()),
+      request(app(missingProof, undefined, [], undefined, proofService(missingProof, proofConfig(), fetcher))).get('/api/admin/v1/payments/7/proof').set(auth()),
+      request(app(unsupported, undefined, [], undefined, proofService(unsupported, proofConfig(), fetcher))).get('/api/admin/v1/payments/7/proof').set(auth()),
+      request(app(disabled, undefined, [], undefined, proofService(disabled, proofConfig(false), fetcher))).get('/api/admin/v1/payments/7/proof').set(auth()),
+    ]);
+
+    expect(responses.map((entry) => [entry.status, entry.body.error.code])).toEqual([
+      [404, 'NOT_FOUND'],
+      [404, 'PAYMENT_PROOF_NOT_FOUND'],
+      [422, 'PAYMENT_PROOF_UNSUPPORTED'],
+      [503, 'PAYMENT_PROOF_UNAVAILABLE'],
+    ]);
+    expect(JSON.stringify(responses.map((entry) => entry.body))).not.toMatch(/private\/legacy|digitaloceanspaces|attachment/i);
+    expect(fetcher.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['UPSTREAM', 502, 'PAYMENT_PROOF_UPSTREAM_UNAVAILABLE'],
+    ['TIMEOUT', 504, 'PAYMENT_PROOF_TIMEOUT'],
+    ['TOO_LARGE', 422, 'PAYMENT_PROOF_TOO_LARGE'],
+    ['INVALID_CONTENT', 422, 'PAYMENT_PROOF_INVALID_CONTENT'],
+  ] as const)('maps %s proof fetch failures safely', async (kind, status, code) => {
+    const repo = repository();
+    const fetcher: PaymentProofFetcher = { fetch: vi.fn(async () => { throw new PaymentProofFetchFailure(kind); }) };
+    const response = await request(app(repo, undefined, [], undefined, proofService(repo, proofConfig(), fetcher)))
+      .get('/api/admin/v1/payments/7/proof').set(auth());
+    expect(response.status).toBe(status);
+    expect(response.body.error.code).toBe(code);
+    expect(JSON.stringify(response.body)).not.toContain(canonicalProof);
+  });
+
+  it('maps image normalization failures and rejects malformed IDs', async () => {
+    const repo = repository();
+    const normalizer: PaymentProofImageNormalizer = { normalize: vi.fn(async () => { throw new PaymentProofImageFailure('INVALID_CONTENT'); }) };
+    const service = proofService(repo, proofConfig(), undefined, normalizer);
+    const invalidImage = await request(app(repo, undefined, [], undefined, service)).get('/api/admin/v1/payments/7/proof').set(auth());
+    const invalidId = await request(app(repo, undefined, [], undefined, service)).get('/api/admin/v1/payments/0/proof').set(auth());
+    expect([invalidImage.status, invalidImage.body.error.code]).toEqual([422, 'PAYMENT_PROOF_INVALID_CONTENT']);
+    expect(invalidId.status).toBe(422);
   });
 
   it('accepts through payment:update and runs push only after a changed repository decision', async () => {
